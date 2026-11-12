@@ -835,7 +835,8 @@ class FirebaseLeagueBackend implements LeagueBackend {
     return normalized;
   }
 
-  String _emailFor(String username) => '$username@pizarrafe.firebaseapp.com';
+  String _emailFor(String username) =>
+      '$username@${_auth.app.options.projectId}.firebaseapp.com';
 
   String _normalizeInvitationCode(String code) {
     final normalized = code.trim().toUpperCase();

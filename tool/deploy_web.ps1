@@ -1,8 +1,12 @@
+param(
+    [Parameter(Mandatory = $true)]
+    [string]$WebAppId
+)
+
 $ErrorActionPreference = 'Stop'
 
-$projectId = 'pizarrafe'
-$webAppId = '1:862334465501:web:2ce682e10521e90b76b234'
-$configPath = Join-Path $env:TEMP "pizarrafe-web-config-$([guid]::NewGuid().ToString('N')).json"
+$projectId = 'pizarraliga'
+$configPath = Join-Path $env:TEMP "pizarraliga-web-config-$([guid]::NewGuid().ToString('N')).json"
 
 try {
     & firebase.cmd apps:sdkconfig WEB $webAppId --out $configPath --project $projectId
@@ -36,9 +40,9 @@ try {
         throw 'Falló la compilación web de Flutter.'
     }
 
-    & firebase.cmd deploy --only hosting --project $projectId
+    & firebase.cmd deploy --only hosting,firestore:rules --project $projectId
     if ($LASTEXITCODE -ne 0) {
-        throw 'Falló el despliegue de Firebase Hosting.'
+        throw 'Falló el despliegue de Firebase Hosting o de las reglas de Firestore.'
     }
 } finally {
     if (Test-Path -LiteralPath $configPath) {
