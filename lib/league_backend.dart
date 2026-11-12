@@ -33,6 +33,11 @@ abstract interface class LeagueBackend {
   Future<void> migrateLegacyUsers();
   Future<String> createLeague(String name);
   Future<void> updateMonthlyDues(String leagueId, int amount);
+  Future<void> updateFinanceSettings(
+    String leagueId,
+    int monthlyDues,
+    String contributionName,
+  );
   Future<String> createInvitation(String leagueId, String role);
   Future<void> redeemInvitation(String code);
   Stream<List<Map<String, dynamic>>> watchPlayers(String leagueId);
@@ -308,6 +313,26 @@ class FirebaseLeagueBackend implements LeagueBackend {
       throw RangeError.range(amount, 1, 100000000, 'amount');
     }
     await _league(leagueId).update({'monthlyDues': amount});
+  }
+
+  @override
+  Future<void> updateFinanceSettings(
+    String leagueId,
+    int monthlyDues,
+    String contributionName,
+  ) async {
+    if (monthlyDues < 1 || monthlyDues > 100000000) {
+      throw RangeError.range(monthlyDues, 1, 100000000, 'monthlyDues');
+    }
+    final cleanName = contributionName.trim();
+    if (cleanName.length > 60) {
+      throw const FormatException(
+        'El nombre no puede tener más de 60 caracteres.',
+      );
+    }
+    await _league(
+      leagueId,
+    ).update({'monthlyDues': monthlyDues, 'contributionName': cleanName});
   }
 
   @override

@@ -1,6 +1,6 @@
 # Pizarra Liga
 
-Aplicacion Flutter para Android para registrar partidos 5 contra 5 y consultar en vivo los resultados y estadisticas de la liga.
+Aplicacion Flutter para Android para registrar partidos 5 contra 5 y consultar en vivo los resultados y estadisticas de la liga. El nombre visible es **PizarraFe**.
 
 ## Funciones
 
@@ -9,8 +9,10 @@ Aplicacion Flutter para Android para registrar partidos 5 contra 5 y consultar e
 - Opcion para finalizar y guardar un partido o salir descartandolo sin guardar el resultado ni las estadisticas.
 - Plantel, historial, rankings completos, comparacion cara a cara y resultados por companero.
 - Administradores pueden editar el nombre de un jugador; el ID y las estadisticas historicas se conservan.
-- Finanzas mensuales: cuota por jugador configurable para cada liga (RD$300 inicial en Liga La Fe y ligas nuevas), con abonos parciales y método de pago en efectivo o depósito; los selectores muestran solo el mes actual y el siguiente, para registrar pagos por adelantado sin cargar la lista. Incluye el aporte separado de RD$2,000 de Carlos Figuereo, gastos generales y resumen de pagos a dueños de cancha.
+- Finanzas mensuales: cuota por jugador configurable para cada liga (RD$300 inicial en Liga La Fe y ligas nuevas), con abonos parciales y método de pago en efectivo o depósito; los selectores muestran solo el mes actual y el siguiente, para registrar pagos por adelantado sin cargar la lista. Incluye aportes comprometidos configurables por nombre (opcionales por liga), ingresos de VISITAS, gastos generales y resumen de pagos a dueños de cancha.
 - Eliminacion de partidos finalizados solo para administradores y propietario; al borrarlos se excluyen tambien sus estadisticas de los totales y comparaciones.
+- El historial muestra un resumen compacto de cada partido finalizado; el desglose de jugadores y estadisticas se puede expandir individualmente.
+- Icono propio de pizarra y balon para el APK y la aplicacion web.
 - Firebase Authentication para cuentas con nombre de usuario y contrasena.
 - Soporte para multiples ligas: cada una tiene su propio plantel, partidos, estadisticas y finanzas.
 - Invitaciones de un solo uso para entrar a una liga; solo `rreyes` puede crear ligas e invitar administradores.
@@ -46,7 +48,7 @@ La aplicacion convierte internamente cada nombre de usuario a una direccion de a
 
 No despliegues las reglas nuevas antes de tener acceso a la cuenta `rreyes`. El despliegue no elimina datos, pero el cambio de permisos puede bloquear temporalmente a las cuentas antiguas hasta completar la migracion del paso 3. No compartas codigos de invitacion publicamente.
 
-Para el control de cuotas, cada jugador del plantel se considera miembro sujeto al monto mensual definido para su liga. Un administrador puede cambiarlo en **Finanzas**, con el icono de configuración junto al selector de mes; el cambio no altera movimientos ya registrados. La cuota inicial es RD$300. El aporte de Carlos Figuereo se controla por separado. Para registrar una cuota adelantada, abre **Registrar cuota**, selecciona el miembro y el mes futuro que está pagando; el sistema guarda el abono en ese mes y calcula allí el saldo pendiente, aunque el mes actual ya esté pagado.
+Para el control de cuotas, cada jugador del plantel se considera miembro sujeto al monto mensual definido para su liga. Un administrador puede cambiarlo en **Finanzas > Configuración de finanzas**; el cambio no altera movimientos ya registrados. La cuota inicial es RD$300. En esa misma configuración puedes escribir el nombre de quien aporta mensualmente o dejar **Aportante fijo (opcional)** en blanco. El compromiso es de RD$2,000 y se controla separado de las cuotas. Los pagos de jugadores visitantes se registran con **Registrar pago de VISITAS** y aparecen como ingresos bajo **VISITAS**; no tienen monto mínimo ni máximo configurado. Para registrar una cuota adelantada, abre **Registrar cuota**, selecciona el miembro y el mes futuro que está pagando; el sistema guarda el abono en ese mes y calcula allí el saldo pendiente, aunque el mes actual ya esté pagado.
 
 ## Ejecutar y compilar
 

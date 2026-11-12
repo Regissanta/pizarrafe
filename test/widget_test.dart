@@ -83,7 +83,7 @@ void main() {
     await tester.pumpWidget(LigaApp(backend: FakeLeagueBackend()));
     await tester.pumpAndSettle();
 
-    expect(find.text('PIZARRA'), findsOneWidget);
+    expect(find.text('PIZARRAFE'), findsOneWidget);
     expect(
       find.text('Tu liga. Cada jugada.\nEn una sola pizarra.'),
       findsOneWidget,
@@ -378,6 +378,8 @@ void main() {
     expect(backend.savedGames.single['id'], isNot('active'));
     await tester.tap(find.text('Historial'));
     await tester.pumpAndSettle();
+    await tester.tap(find.text('Ver desglose del partido'));
+    await tester.pumpAndSettle();
     expect(find.text('Local'), findsWidgets);
   });
 
@@ -600,6 +602,7 @@ void main() {
 
     await tester.tap(find.text('Finanzas'));
     await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Registrar cuota'));
     await tester.tap(find.text('Registrar cuota'));
     await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextField).last, '100');
@@ -636,14 +639,83 @@ void main() {
     await tester.pumpAndSettle();
     expect(backend.savedFinanceEntries.last['category'], 'maintenance');
     expect(backend.savedFinanceEntries.last['description'], 'Cancha Central');
-    await tester.scrollUntilVisible(
-      find.textContaining('Cancha Central').first,
-      200,
-      scrollable: find.byType(Scrollable).first,
-    );
+    await tester.dragFrom(const Offset(200, 400), const Offset(0, -500));
+    await tester.pumpAndSettle();
     expect(find.text('Mantenimiento de cancha'), findsWidgets);
     expect(find.textContaining('Cancha Central'), findsWidgets);
     expect(find.text('-RD\$ 500'), findsWidgets);
+  });
+
+  testWidgets('configures a generic contributor and records VISITAS', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    final backend = FakeLeagueBackend();
+    await tester.pumpWidget(LigaApp(backend: backend));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Finanzas'));
+    await tester.pumpAndSettle();
+    expect(find.text('Aporte de Carlos'), findsNothing);
+
+    await tester.ensureVisible(find.byTooltip('Configuración de finanzas'));
+    await tester.tap(find.byTooltip('Configuración de finanzas'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextFormField).last, 'María López');
+    await tester.tap(find.text('Guardar').last);
+    await tester.pumpAndSettle();
+    expect(backend.contributionName, 'María López');
+    expect(find.text('Aporte de María López'), findsOneWidget);
+
+    await tester.ensureVisible(find.text('Aporte de María López'));
+    await tester.tap(find.text('Aporte de María López'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).last, '2000');
+    await tester.tap(find.text('Guardar movimiento'));
+    await tester.pumpAndSettle();
+    expect(backend.savedFinanceEntries.last['kind'], 'pledge');
+    expect(backend.savedFinanceEntries.last['memberName'], 'María López');
+
+    await tester.dragFrom(const Offset(200, 250), const Offset(0, 500));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byTooltip('Configuración de finanzas'));
+    await tester.tap(find.byTooltip('Configuración de finanzas'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextFormField).last, '');
+    await tester.tap(find.text('Guardar').last);
+    await tester.pumpAndSettle();
+    expect(backend.contributionName, isEmpty);
+    expect(find.text('Aporte de María López'), findsNothing);
+
+    await tester.ensureVisible(find.text('Registrar pago de VISITAS'));
+    await tester.tap(find.text('Registrar pago de VISITAS'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).first, 'Equipo visitante');
+    await tester.enterText(find.byType(TextField).last, '1');
+    await tester.tap(find.text('Guardar movimiento'));
+    await tester.pumpAndSettle();
+    expect(backend.savedFinanceEntries.last['kind'], 'visits');
+    expect(backend.savedFinanceEntries.last['category'], 'visits');
+    expect(backend.savedFinanceEntries.last['memberName'], 'VISITAS');
+    expect(backend.savedFinanceEntries.last['description'], 'Equipo visitante');
+    expect(
+      FinanceEntry.fromJson(backend.savedFinanceEntries.last).isIncome,
+      isTrue,
+    );
+    await tester.ensureVisible(find.text('Registrar pago de VISITAS'));
+    await tester.tap(find.text('Registrar pago de VISITAS'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).last, '2000000000');
+    await tester.tap(find.text('Guardar movimiento'));
+    await tester.pumpAndSettle();
+    expect(backend.savedFinanceEntries.last['amount'], 2000000000);
+    expect(backend.savedFinanceEntries.last['memberName'], 'VISITAS');
+    await tester.scrollUntilVisible(
+      find.text('+RD\$ 2,000,000,000'),
+      200,
+      scrollable: find.byType(Scrollable).hitTestable().first,
+    );
+    expect(find.text('VISITAS'), findsWidgets);
+    expect(find.text('+RD\$ 2,000,000,000'), findsOneWidget);
   });
 
   testWidgets('administrator can configure the league monthly dues', (
@@ -663,13 +735,13 @@ void main() {
     );
     expect(find.textContaining('RD\$ 450 POR JUGADOR'), findsOneWidget);
     await tester.scrollUntilVisible(
-      find.byTooltip('Configurar cuota mensual'),
+      find.byTooltip('Configuración de finanzas'),
       -200,
       scrollable: find.byType(Scrollable).first,
     );
-    await tester.tap(find.byTooltip('Configurar cuota mensual'));
+    await tester.tap(find.byTooltip('Configuración de finanzas'));
     await tester.pumpAndSettle();
-    await tester.enterText(find.byType(TextFormField).last, '750');
+    await tester.enterText(find.byType(TextFormField).first, '750');
     await tester.tap(find.text('Guardar').last);
     await tester.pumpAndSettle();
 
@@ -743,7 +815,7 @@ void main() {
     expect(find.textContaining('Depósito'), findsOneWidget);
   });
 
-  testWidgets('shows both complete rosters on home and saved results', (
+  testWidgets('expands both complete rosters in compact saved results', (
     tester,
   ) async {
     final players = List.generate(
@@ -775,11 +847,12 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Jugador 0'), findsOneWidget);
-    expect(find.text('Jugador 9'), findsOneWidget);
-    expect(find.text('Contrarios'), findsWidgets);
+    expect(find.text('Jugador 0'), findsNothing);
 
     await tester.tap(find.text('Historial'));
+    await tester.pumpAndSettle();
+    expect(find.text('Jugador 0'), findsNothing);
+    await tester.tap(find.text('Ver desglose del partido'));
     await tester.pumpAndSettle();
     expect(find.text('Jugador 0'), findsOneWidget);
     expect(find.text('Jugador 9'), findsOneWidget);
@@ -821,6 +894,10 @@ void main() {
 
     await tester.tap(find.text('Historial'));
     await tester.pumpAndSettle();
+    expect(find.text('Ver desglose del partido'), findsOneWidget);
+    expect(find.text('p0'), findsNothing);
+    await tester.tap(find.text('Ver desglose del partido'));
+    await tester.pumpAndSettle();
     expect(find.text('Local'), findsWidgets);
     await tester.tap(find.text('Eliminar partido'));
     await tester.pumpAndSettle();
@@ -858,6 +935,7 @@ class FakeLeagueBackend implements LeagueBackend {
   final List<Map<String, dynamic>> _financeEntries;
   Map<String, dynamic>? _activeGame;
   int monthlyDues;
+  String contributionName = '';
   bool failFinish = false;
   Completer<void>? syncGate;
   final List<Map<String, dynamic>> _users = [];
@@ -961,6 +1039,16 @@ class FakeLeagueBackend implements LeagueBackend {
   @override
   Future<void> updateMonthlyDues(String leagueId, int amount) async {
     monthlyDues = amount;
+  }
+
+  @override
+  Future<void> updateFinanceSettings(
+    String leagueId,
+    int amount,
+    String name,
+  ) async {
+    monthlyDues = amount;
+    contributionName = name;
   }
 
   @override

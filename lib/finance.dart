@@ -23,7 +23,7 @@ class FinanceEntry {
   final String? memberId;
   final String? memberName;
 
-  bool get isIncome => kind == 'dues' || kind == 'pledge';
+  bool get isIncome => kind == 'dues' || kind == 'pledge' || kind == 'visits';
   bool get isExpense => kind == 'expense';
 
   Map<String, dynamic> toJson() => {

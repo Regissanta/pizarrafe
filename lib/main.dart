@@ -17,8 +17,9 @@ const _muted = Color(0xFF8C9AB5);
 const _orange = Color(0xFFFF8A3D);
 const _blue = Color(0xFF54B6FF);
 const _defaultMonthlyDues = 300;
-const _carlosPledge = 2000;
-const _carlosContributionId = 'carlos-figuereo';
+const _contributionPledge = 2000;
+const _legacyCarlosContributionId = 'carlos-figuereo';
+const _leagueContributionId = 'league-contribution';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -274,6 +275,15 @@ class _LigaAppState extends State<LigaApp> {
       }
     }
     return _defaultMonthlyDues;
+  }
+
+  String get _contributionName {
+    for (final league in _availableLeagues) {
+      if (league['id'] == _selectedLeagueId) {
+        return (league['contributionName'] as String? ?? '').trim();
+      }
+    }
+    return '';
   }
 
   String get _selectedLeagueName {
@@ -929,7 +939,7 @@ class _LigaAppState extends State<LigaApp> {
       navigatorKey: _navigatorKey,
       scaffoldMessengerKey: _messengerKey,
       debugShowCheckedModeBanner: false,
-      title: 'Pizarra Liga',
+      title: 'PizarraFe',
       theme: ThemeData(
         brightness: Brightness.dark,
         scaffoldBackgroundColor: _background,
@@ -965,7 +975,7 @@ class _LigaAppState extends State<LigaApp> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       const Text(
-                        'PIZARRA',
+                        'PIZARRAFE',
                         style: TextStyle(
                           fontWeight: FontWeight.w900,
                           letterSpacing: 2,
@@ -1346,7 +1356,7 @@ class _LigaAppState extends State<LigaApp> {
   }
 
   Widget _noLeagueScreen() => Scaffold(
-    appBar: AppBar(title: const Text('PIZARRA')),
+    appBar: AppBar(title: const Text('PIZARRAFE')),
     body: Center(
       child: Padding(
         padding: const EdgeInsets.all(24),
@@ -2499,46 +2509,64 @@ class _LigaAppState extends State<LigaApp> {
       )
       .fold(0, (total, entry) => total + entry.amount);
 
-  int _receivedForCarlos(String period) => financeEntries
+  int _receivedForContribution(String period) => financeEntries
       .where(
         (entry) =>
             entry.kind == 'pledge' &&
-            entry.memberId == _carlosContributionId &&
+            (entry.memberId == _leagueContributionId ||
+                (entry.memberId == _legacyCarlosContributionId &&
+                    _contributionName.toLowerCase() == 'carlos figuereo')) &&
             entry.period == period,
       )
       .fold(0, (total, entry) => total + entry.amount);
 
-  Future<void> _editMonthlyDues() async {
+  Future<void> _editFinanceSettings() async {
     if (!_canWrite || _selectedLeagueId == null) return;
     var amountText = '$_monthlyDues';
+    var contributionName = _contributionName;
     String? validationError;
-    final amount = await showDialog<int>(
+    final settings = await showDialog<(int, String)>(
       context: _navigatorKey.currentContext!,
       builder:
           (context) => StatefulBuilder(
             builder:
                 (context, setDialogState) => AlertDialog(
-                  title: const Text('Cuota mensual por jugador'),
-                  content: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      TextFormField(
-                        initialValue: amountText,
-                        keyboardType: TextInputType.number,
-                        onChanged: (value) => amountText = value,
-                        decoration: InputDecoration(
-                          labelText: 'Monto en pesos dominicanos',
-                          prefixText: 'RD\$ ',
-                          errorText: validationError,
+                  title: const Text('Configuración de finanzas'),
+                  content: SingleChildScrollView(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        TextFormField(
+                          initialValue: amountText,
+                          keyboardType: TextInputType.number,
+                          onChanged: (value) => amountText = value,
+                          decoration: InputDecoration(
+                            labelText: 'Cuota mensual por jugador',
+                            prefixText: 'RD\$ ',
+                            errorText: validationError,
+                          ),
                         ),
-                      ),
-                      const SizedBox(height: 8),
-                      const Text(
-                        'El cambio aplica a los saldos y pagos futuros; no modifica los movimientos ya registrados.',
-                        style: TextStyle(color: _muted, fontSize: 12),
-                      ),
-                    ],
+                        const SizedBox(height: 16),
+                        TextFormField(
+                          initialValue: contributionName,
+                          maxLength: 60,
+                          textCapitalization: TextCapitalization.words,
+                          onChanged: (value) => contributionName = value,
+                          decoration: const InputDecoration(
+                            labelText: 'Aportante fijo (opcional)',
+                            hintText: 'En blanco si no hay aportante',
+                            helperText:
+                                'El aporte comprometido es de RD\$2,000 al mes.',
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        const Text(
+                          'Los cambios de cuota aplican a saldos futuros y no modifican movimientos registrados.',
+                          style: TextStyle(color: _muted, fontSize: 12),
+                        ),
+                      ],
+                    ),
                   ),
                   actions: [
                     TextButton(
@@ -2556,7 +2584,7 @@ class _LigaAppState extends State<LigaApp> {
                           );
                           return;
                         }
-                        Navigator.pop(context, value);
+                        Navigator.pop(context, (value, contributionName));
                       },
                       child: const Text('Guardar'),
                     ),
@@ -2564,17 +2592,21 @@ class _LigaAppState extends State<LigaApp> {
                 ),
           ),
     );
-    if (amount == null) return;
+    if (settings == null) return;
     final leagueId = _selectedLeagueId;
     if (leagueId == null) return;
     try {
-      await _backend.updateMonthlyDues(leagueId, amount);
+      await _backend.updateFinanceSettings(leagueId, settings.$1, settings.$2);
       if (!mounted || _selectedLeagueId != leagueId) return;
       setState(() {
         _availableLeagues = [
           for (final league in _availableLeagues)
             if (league['id'] == leagueId)
-              {...league, 'monthlyDues': amount}
+              {
+                ...league,
+                'monthlyDues': settings.$1,
+                'contributionName': settings.$2.trim(),
+              }
             else
               league,
         ];
@@ -2599,7 +2631,10 @@ class _LigaAppState extends State<LigaApp> {
             monthlyDues: _monthlyDues,
             period: _selectedFinancePeriod,
             financeEntries: financeEntries,
-            carlosReceived: _receivedForCarlos(_selectedFinancePeriod),
+            contributionName: _contributionName,
+            contributionReceived: _receivedForContribution(
+              _selectedFinancePeriod,
+            ),
           ),
     );
     if (entry == null) return;
@@ -2639,7 +2674,9 @@ class _LigaAppState extends State<LigaApp> {
       (total, player) =>
           total + _receivedForMember(player.id, _selectedFinancePeriod),
     );
-    final carlosReceived = _receivedForCarlos(_selectedFinancePeriod);
+    final contributionReceived = _receivedForContribution(
+      _selectedFinancePeriod,
+    );
     final monthChoices = financePeriodChoices(DateTime.now());
 
     return ListView(
@@ -2653,32 +2690,68 @@ class _LigaAppState extends State<LigaApp> {
                 style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
               ),
             ),
-            DropdownButton<String>(
-              value: _selectedFinancePeriod,
-              underline: const SizedBox.shrink(),
-              items:
-                  monthChoices
-                      .map(
-                        (period) => DropdownMenuItem(
-                          value: period,
-                          child: Text(financePeriodLabel(period)),
-                        ),
-                      )
-                      .toList(),
-              onChanged: (period) {
-                if (period != null) {
-                  setState(() => _selectedFinancePeriod = period);
-                }
-              },
-            ),
             if (_canWrite)
               IconButton(
-                tooltip: 'Configurar cuota mensual',
-                onPressed: _editMonthlyDues,
+                tooltip: 'Configuración de finanzas',
+                onPressed: _editFinanceSettings,
                 icon: const Icon(Icons.settings_outlined),
               ),
           ],
         ),
+        Align(
+          alignment: Alignment.centerRight,
+          child: DropdownButton<String>(
+            value: _selectedFinancePeriod,
+            underline: const SizedBox.shrink(),
+            items:
+                monthChoices
+                    .map(
+                      (period) => DropdownMenuItem(
+                        value: period,
+                        child: Text(financePeriodLabel(period)),
+                      ),
+                    )
+                    .toList(),
+            onChanged: (period) {
+              if (period != null) {
+                setState(() => _selectedFinancePeriod = period);
+              }
+            },
+          ),
+        ),
+        const SizedBox(height: 12),
+        if (_canWrite)
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              FilledButton.icon(
+                onPressed: () => _addFinanceEntry('visits'),
+                icon: const Icon(Icons.sports_basketball_outlined),
+                label: const Text('Registrar pago de VISITAS'),
+                style: FilledButton.styleFrom(backgroundColor: _orange),
+              ),
+              FilledButton.icon(
+                onPressed: () => _addFinanceEntry('dues'),
+                icon: const Icon(Icons.payments_outlined),
+                label: const Text('Registrar cuota'),
+                style: FilledButton.styleFrom(backgroundColor: _blue),
+              ),
+              if (_contributionName.isNotEmpty)
+                FilledButton.icon(
+                  onPressed: () => _addFinanceEntry('pledge'),
+                  icon: const Icon(Icons.volunteer_activism),
+                  label: Text('Aporte de $_contributionName'),
+                  style: FilledButton.styleFrom(backgroundColor: _blue),
+                ),
+              FilledButton.icon(
+                onPressed: () => _addFinanceEntry('expense'),
+                icon: const Icon(Icons.receipt_long),
+                label: const Text('Registrar gasto'),
+                style: FilledButton.styleFrom(backgroundColor: _orange),
+              ),
+            ],
+          ),
         const SizedBox(height: 12),
         Row(
           children: [
@@ -2731,36 +2804,9 @@ class _LigaAppState extends State<LigaApp> {
         ),
         const SizedBox(height: 8),
         Text(
-          'Cuotas: ${formatPesos(duesReceived)} recibidos de ${formatPesos(duesExpected)} esperados · '
-          'Carlos: ${formatPesos(carlosReceived)} de ${formatPesos(_carlosPledge)}',
+          'Cuotas: ${formatPesos(duesReceived)} recibidos de ${formatPesos(duesExpected)} esperados',
           style: const TextStyle(color: _muted, fontSize: 11),
         ),
-        const SizedBox(height: 16),
-        if (_canWrite)
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              FilledButton.icon(
-                onPressed: () => _addFinanceEntry('dues'),
-                icon: const Icon(Icons.payments_outlined),
-                label: const Text('Registrar cuota'),
-                style: FilledButton.styleFrom(backgroundColor: _blue),
-              ),
-              FilledButton.icon(
-                onPressed: () => _addFinanceEntry('pledge'),
-                icon: const Icon(Icons.volunteer_activism),
-                label: const Text('Aporte de Carlos'),
-                style: FilledButton.styleFrom(backgroundColor: _blue),
-              ),
-              FilledButton.icon(
-                onPressed: () => _addFinanceEntry('expense'),
-                icon: const Icon(Icons.receipt_long),
-                label: const Text('Registrar gasto'),
-                style: FilledButton.styleFrom(backgroundColor: _orange),
-              ),
-            ],
-          ),
         const SizedBox(height: 20),
         _financeHeading(
           'CUOTAS MENSUALES · ${formatPesos(_monthlyDues)} POR JUGADOR',
@@ -2820,36 +2866,43 @@ class _LigaAppState extends State<LigaApp> {
             ),
           ),
         const SizedBox(height: 18),
-        _financeHeading('APORTE COMPROMETIDO · CARLOS FIGUEREO'),
-        const SizedBox(height: 8),
-        Container(
-          decoration: BoxDecoration(
-            color: _surface,
-            borderRadius: BorderRadius.circular(18),
+        if (_contributionName.isNotEmpty) ...[
+          _financeHeading(
+            'APORTE COMPROMETIDO · ${_contributionName.toUpperCase()}',
           ),
-          child: ListTile(
-            leading: const CircleAvatar(
-              backgroundColor: Color(0x3354B6FF),
-              child: Icon(Icons.volunteer_activism, color: _blue),
+          const SizedBox(height: 8),
+          Container(
+            decoration: BoxDecoration(
+              color: _surface,
+              borderRadius: BorderRadius.circular(18),
             ),
-            title: const Text('Aporte mensual (separado de cuotas)'),
-            subtitle: Text(
-              'Recibido ${formatPesos(carlosReceived)} de ${formatPesos(_carlosPledge)}',
-              style: const TextStyle(color: _muted, fontSize: 11),
-            ),
-            trailing: Text(
-              carlosReceived >= _carlosPledge
-                  ? 'Completo'
-                  : 'Pendiente ${formatPesos(_carlosPledge - carlosReceived)}',
-              style: TextStyle(
-                color: carlosReceived >= _carlosPledge ? _blue : _orange,
-                fontSize: 11,
-                fontWeight: FontWeight.bold,
+            child: ListTile(
+              leading: const CircleAvatar(
+                backgroundColor: Color(0x3354B6FF),
+                child: Icon(Icons.volunteer_activism, color: _blue),
+              ),
+              title: Text('Aporte mensual de $_contributionName'),
+              subtitle: Text(
+                'Recibido ${formatPesos(contributionReceived)} de ${formatPesos(_contributionPledge)}',
+                style: const TextStyle(color: _muted, fontSize: 11),
+              ),
+              trailing: Text(
+                contributionReceived >= _contributionPledge
+                    ? 'Completo'
+                    : 'Pendiente ${formatPesos(_contributionPledge - contributionReceived)}',
+                style: TextStyle(
+                  color:
+                      contributionReceived >= _contributionPledge
+                          ? _blue
+                          : _orange,
+                  fontSize: 11,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
             ),
           ),
-        ),
-        const SizedBox(height: 18),
+          const SizedBox(height: 18),
+        ],
         _financeHeading('GASTOS DEL MES'),
         const SizedBox(height: 8),
         ...(periodEntries.where((entry) => entry.isExpense).isEmpty
@@ -2891,7 +2944,12 @@ class _LigaAppState extends State<LigaApp> {
     final isExpense = entry.isExpense;
     final title = switch (entry.kind) {
       'dues' => 'Cuota · ${entry.memberName ?? 'Miembro'}',
-      'pledge' => 'Aporte · Carlos Figuereo',
+      'pledge' => 'Aporte · ${entry.memberName ?? 'Aporte comprometido'}',
+      'visits' => 'VISITAS',
+      'expense' =>
+        entry.category == 'maintenance'
+            ? 'Mantenimiento de cancha'
+            : 'Gasto de la liga',
       _ =>
         entry.category == 'maintenance'
             ? 'Mantenimiento de cancha'
@@ -3044,10 +3102,21 @@ class _LigaAppState extends State<LigaApp> {
               ),
             ],
           ),
-          const Divider(height: 20),
-          _gameRosterSection(game, game.home, game.homePlayers),
-          const SizedBox(height: 10),
-          _gameRosterSection(game, game.away, game.awayPlayers),
+          const SizedBox(height: 4),
+          ExpansionTile(
+            tilePadding: EdgeInsets.zero,
+            childrenPadding: EdgeInsets.zero,
+            title: const Text(
+              'Ver desglose del partido',
+              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+            ),
+            children: [
+              const Divider(height: 12),
+              _gameRosterSection(game, game.home, game.homePlayers),
+              const SizedBox(height: 10),
+              _gameRosterSection(game, game.away, game.awayPlayers),
+            ],
+          ),
         ],
       ),
     );
@@ -3100,19 +3169,21 @@ class _LigaAppState extends State<LigaApp> {
                         line.personalFouls >
                     0;
             return Padding(
-              padding: const EdgeInsets.symmetric(vertical: 3),
-              child: Row(
+              padding: const EdgeInsets.symmetric(vertical: 5),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Expanded(
-                    child: Text(
-                      _player(playerId)?.name ?? playerId,
-                      style: const TextStyle(fontSize: 12),
-                    ),
+                  Text(
+                    _player(playerId)?.name ?? playerId,
+                    style: const TextStyle(fontSize: 12),
                   ),
                   if (hasStats)
-                    Text(
-                      '${line.points} pts · ${line.rebounds} reb · ${line.assists} ast · ${line.threes} 3pt · ${line.steals} ROB · ${line.turnovers} TO · ${line.blocks} BLK · ${line.personalFouls} FP',
-                      style: const TextStyle(fontSize: 10, color: _muted),
+                    Padding(
+                      padding: const EdgeInsets.only(left: 8, top: 2),
+                      child: Text(
+                        '${line.points} pts · ${line.rebounds} reb · ${line.assists} ast · ${line.threes} 3pt · ${line.steals} ROB · ${line.turnovers} TO · ${line.blocks} BLK · ${line.personalFouls} FP',
+                        style: const TextStyle(fontSize: 10, color: _muted),
+                      ),
                     ),
                 ],
               ),
@@ -3283,7 +3354,8 @@ class _FinanceEntrySheet extends StatefulWidget {
     required this.monthlyDues,
     required this.period,
     required this.financeEntries,
-    required this.carlosReceived,
+    required this.contributionName,
+    required this.contributionReceived,
   });
 
   final String kind;
@@ -3291,7 +3363,8 @@ class _FinanceEntrySheet extends StatefulWidget {
   final int monthlyDues;
   final String period;
   final List<FinanceEntry> financeEntries;
-  final int carlosReceived;
+  final String contributionName;
+  final int contributionReceived;
 
   @override
   State<_FinanceEntrySheet> createState() => _FinanceEntrySheetState();
@@ -3355,21 +3428,33 @@ class _FinanceEntrySheetState extends State<_FinanceEntrySheet> {
           .clamp(0, widget.monthlyDues);
     }
     if (widget.kind == 'pledge') {
-      return (_carlosPledge - widget.carlosReceived).clamp(0, _carlosPledge);
+      return (_contributionPledge - widget.contributionReceived).clamp(
+        0,
+        _contributionPledge,
+      );
     }
     return null;
   }
 
   String get _title => switch (widget.kind) {
     'dues' => 'Registrar abono de cuota',
-    'pledge' => 'Registrar aporte de Carlos',
+    'pledge' => 'Registrar aporte de ${widget.contributionName}',
+    'visits' => 'Registrar aporte de VISITAS',
     _ => 'Registrar gasto de la liga',
   };
 
   void _save() {
     final amount = int.tryParse(_amountController.text.trim());
-    if (amount == null || amount <= 0) {
-      setState(() => _error = 'Escribe un monto mayor que cero.');
+    if (amount == null ||
+        amount < 0 ||
+        (amount == 0 && widget.kind != 'visits')) {
+      setState(
+        () =>
+            _error =
+                widget.kind == 'visits'
+                    ? 'Escribe un monto válido para VISITAS.'
+                    : 'Escribe un monto mayor que cero.',
+      );
       return;
     }
     if (widget.kind == 'dues' && _memberId == null) {
@@ -3405,20 +3490,27 @@ class _FinanceEntrySheetState extends State<_FinanceEntrySheet> {
               ? _expenseCategory
               : widget.kind == 'dues'
               ? 'dues'
-              : 'carlos',
+              : widget.kind == 'pledge'
+              ? 'contribution'
+              : 'visits',
       description: description,
-      paymentMethod: widget.kind == 'dues' ? _paymentMethod : null,
+      paymentMethod:
+          widget.kind == 'dues' || widget.kind == 'visits'
+              ? _paymentMethod
+              : null,
       memberId:
           widget.kind == 'dues'
               ? _memberId
               : widget.kind == 'pledge'
-              ? _carlosContributionId
+              ? _leagueContributionId
               : null,
       memberName:
           widget.kind == 'dues'
               ? memberName
               : widget.kind == 'pledge'
-              ? 'Carlos Figuereo'
+              ? widget.contributionName
+              : widget.kind == 'visits'
+              ? 'VISITAS'
               : null,
     );
     Navigator.pop(context, entry);
@@ -3530,14 +3622,47 @@ class _FinanceEntrySheetState extends State<_FinanceEntrySheet> {
               const ListTile(
                 contentPadding: EdgeInsets.zero,
                 leading: Icon(Icons.volunteer_activism, color: _blue),
-                title: Text('Carlos Figuereo'),
+                title: Text('Aporte comprometido'),
                 subtitle: Text(
                   'Aporte mensual aparte de las cuotas de miembros',
                 ),
               ),
               Text(
-                'Compromiso mensual ${formatPesos(_carlosPledge)} · pendiente ${formatPesos(_remaining ?? 0)}',
+                'Aporte de ${widget.contributionName} · compromiso mensual ${formatPesos(_contributionPledge)} · pendiente ${formatPesos(_remaining ?? 0)}',
                 style: const TextStyle(color: _muted, fontSize: 12),
+              ),
+              const SizedBox(height: 12),
+            ],
+            if (widget.kind == 'visits') ...[
+              const Text(
+                'Aporte por jugar en la cancha sin pertenecer a la liga. No tiene monto mínimo ni máximo.',
+                style: TextStyle(color: _muted, fontSize: 12),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _descriptionController,
+                textCapitalization: TextCapitalization.sentences,
+                decoration: const InputDecoration(
+                  labelText: 'Detalle (opcional)',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String>(
+                value: _paymentMethod,
+                decoration: const InputDecoration(
+                  labelText: 'Método de pago',
+                  border: OutlineInputBorder(),
+                ),
+                items: const [
+                  DropdownMenuItem(value: 'cash', child: Text('Efectivo')),
+                  DropdownMenuItem(value: 'deposit', child: Text('Depósito')),
+                ],
+                onChanged: (value) {
+                  if (value != null) {
+                    setState(() => _paymentMethod = value);
+                  }
+                },
               ),
               const SizedBox(height: 12),
             ],
@@ -3586,10 +3711,13 @@ class _FinanceEntrySheetState extends State<_FinanceEntrySheet> {
                 labelText: 'Monto (RD\$)',
                 border: const OutlineInputBorder(),
                 prefixIcon: const Icon(Icons.payments_outlined),
-                helperText:
+                helperText: switch (widget.kind) {
+                  'visits' => 'Sin mínimo ni máximo',
+                  _ =>
                     _remaining == null
                         ? null
                         : 'Máximo para completar este mes: ${formatPesos(_remaining!)}',
+                },
               ),
             ),
             if (_error != null) ...[
@@ -4561,7 +4689,7 @@ class _AuthPageState extends State<_AuthPage> {
                   const Icon(Icons.sports_basketball, color: _orange, size: 44),
                   const SizedBox(height: 8),
                   const Text(
-                    'PIZARRA LIGA',
+                    'PIZARRAFE',
                     textAlign: TextAlign.center,
                     style: TextStyle(
                       fontSize: 22,
