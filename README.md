@@ -1,0 +1,85 @@
+# Pizarra Liga
+
+Aplicacion Flutter para Android para registrar partidos 5 contra 5 y consultar en vivo los resultados y estadisticas de la liga.
+
+## Funciones
+
+- Marcador horizontal para partidos por tiempo o por objetivo de puntos.
+- Estadisticas en vivo por jugador: puntos, rebotes, asistencias, triples (contados al anotar desde el boton de +3), robos de balon (ROB), balones perdidos (TO), tapas (BLK) y faltas personales (FP); los triples ya no tienen un contador manual en la fila de estadisticas.
+- Opcion para finalizar y guardar un partido o salir descartandolo sin guardar el resultado ni las estadisticas.
+- Plantel, historial, rankings completos, comparacion cara a cara y resultados por companero.
+- Administradores pueden editar el nombre de un jugador; el ID y las estadisticas historicas se conservan.
+- Finanzas mensuales: cuota por jugador configurable para cada liga (RD$300 inicial en Liga La Fe y ligas nuevas), con abonos parciales y método de pago en efectivo o depósito; los selectores muestran solo el mes actual y el siguiente, para registrar pagos por adelantado sin cargar la lista. Incluye el aporte separado de RD$2,000 de Carlos Figuereo, gastos generales y resumen de pagos a dueños de cancha.
+- Eliminacion de partidos finalizados solo para administradores y propietario; al borrarlos se excluyen tambien sus estadisticas de los totales y comparaciones.
+- Firebase Authentication para cuentas con nombre de usuario y contrasena.
+- Soporte para multiples ligas: cada una tiene su propio plantel, partidos, estadisticas y finanzas.
+- Invitaciones de un solo uso para entrar a una liga; solo `rreyes` puede crear ligas e invitar administradores.
+- Firestore para sincronizar los datos por liga entre dispositivos.
+- Roles independientes por liga: propietario global (`rreyes`), administrador y lector.
+
+## Vincular el proyecto Firebase `pizarrafe`
+
+La configuracion de Firebase es especifica de cada proyecto y no se incluye en el repositorio. Antes de ejecutar la app:
+
+1. En Firebase Console, agrega una aplicacion Android al proyecto `pizarrafe` con el ID de paquete `pizarra.fe`.
+2. Descarga el archivo `google-services.json` de esa aplicacion y colocalo en `android/app/google-services.json`.
+3. En Authentication, habilita el proveedor **Email/Password**.
+4. Crea una base de datos de Firestore en modo produccion y publica las reglas de `firestore.rules`.
+
+La aplicacion convierte internamente cada nombre de usuario a una direccion de autenticacion con el dominio `pizarrafe.firebaseapp.com`; no se solicita ni se envia correo electronico.
+
+### Propietario global
+
+1. Antes de abrir el registro publico, crea la cuenta inicial directamente en Firebase Console > Authentication > Add user con el correo `rreyes@pizarrafe.firebaseapp.com` y establece ahi la contrasena privada.
+2. Copia el UID asignado a esa cuenta.
+3. En Firestore, crea `users/{UID}` con los campos `uid` (el UID como texto), `username` (`rreyes`) y `role` (`owner`).
+4. Inicia sesion en la app con el usuario `rreyes`. Su perfil debe conservar `role: owner`; esta cuenta puede acceder a todas las ligas.
+
+### Crear ligas, asignar administradores y migrar las cuentas actuales
+
+1. Publica primero las reglas nuevas de Firestore desde `firestore.rules`. Estas reglas limitan cada liga a sus miembros. Mientras completas la migracion del paso 3, las cuentas antiguas distintas de `rreyes` pueden quedar temporalmente sin acceso a los datos.
+2. Actualiza/publica la app y entra con `rreyes`. La liga existente se conserva con el ID `main` y se presenta como **Liga La Fe**; no se borran partidos, estadisticas ni finanzas.
+3. En **Cuenta**, usa **Asignar cuentas existentes a Liga La Fe** y confirma. Esto crea la membresia de cada cuenta existente y conserva como administrador a quien ya tenia ese rol. Ejecuta este paso con `rreyes` despues de publicar las reglas nuevas.
+4. Para crear otra liga, usa **Crear liga e invitar administrador**, escribe el nombre y comparte el codigo generado con su administrador. El codigo se muestra al crearlo y solo se puede usar una vez.
+5. Cada administrador puede crear codigos para invitar miembros a su propia liga desde **Cuenta**. Un usuario nuevo debe registrarse con el codigo que recibio; un usuario existente inicia sesion y elige **Unirme a otra liga con un codigo**.
+6. Cambia la liga activa desde **Cuenta > Mis ligas**. Los administradores solo pueden escribir en sus ligas; los lectores solo consultan. `rreyes` conserva acceso global.
+
+No despliegues las reglas nuevas antes de tener acceso a la cuenta `rreyes`. El despliegue no elimina datos, pero el cambio de permisos puede bloquear temporalmente a las cuentas antiguas hasta completar la migracion del paso 3. No compartas codigos de invitacion publicamente.
+
+Para el control de cuotas, cada jugador del plantel se considera miembro sujeto al monto mensual definido para su liga. Un administrador puede cambiarlo en **Finanzas**, con el icono de configuración junto al selector de mes; el cambio no altera movimientos ya registrados. La cuota inicial es RD$300. El aporte de Carlos Figuereo se controla por separado. Para registrar una cuota adelantada, abre **Registrar cuota**, selecciona el miembro y el mes futuro que está pagando; el sistema guarda el abono en ese mes y calcula allí el saldo pendiente, aunque el mes actual ya esté pagado.
+
+## Ejecutar y compilar
+
+```sh
+flutter pub get
+flutter run
+flutter build apk
+```
+
+Para compartir el APK con datos en la nube, primero completa los pasos de vinculacion de Firebase y vuelve a compilar. Nunca guardes contrasenas de usuarios en el codigo fuente. La app requiere Android 7.0 (API 24) o posterior por el SDK actual de Firebase Authentication.
+
+## Compilar la version web para iPhone, iPad y navegadores
+
+1. En Firebase Console > Configuracion del proyecto > Tus aplicaciones, agrega una aplicacion web al proyecto `pizarrafe`.
+2. Copia de la configuracion web los valores `apiKey`, `appId`, `messagingSenderId` y `projectId`. Si aparecen, copia tambien `authDomain` y `storageBucket`. La app web `pizarra liga web` ya esta registrada en `pizarrafe`.
+3. En Authentication > Configuracion, agrega a dominios autorizados el dominio donde publicarás la app (por ejemplo, el dominio de Firebase Hosting).
+4. En PowerShell, desde la raiz del proyecto, ejecuta el script para descargar la configuracion de la app web registrada, compilar y publicar. Requiere Flutter y Firebase CLI instalados y haber iniciado sesion en Firebase:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tool\deploy_web.ps1
+```
+
+El script obtiene los valores con `firebase apps:sdkconfig`, los pasa como `--dart-define` a Flutter y publica `build/web` en Hosting. No guardes contrasenas en el script ni en el codigo fuente. Para compilar sin publicar, usa los mismos `--dart-define` con `flutter build web --release`.
+
+Si prefieres hacer el despliegue manual, instala Firebase CLI e inicia sesion:
+
+```powershell
+npm.cmd install --global firebase-tools
+& "$env:APPDATA\npm\firebase.cmd" login
+```
+
+El inicio de sesion abre Google en el navegador; autoriza Firebase CLI con la cuenta que tiene acceso al proyecto `pizarrafe`. `firebase.json` y `.firebaserc` ya estan configurados para publicar `build/web` en ese proyecto. Al terminar, la CLI mostrara el enlace de Hosting. En Firebase Console > Authentication > Configuracion, confirma que el dominio `pizarrafe.web.app` (o el dominio que muestre la CLI) esta en Dominios autorizados.
+
+Los usuarios de iPhone/iPad podrán abrir el enlace en Safari y agregarlo a la pantalla de inicio. El registro y los datos compartidos siguen usando Firebase. La configuracion web se incluye en el JavaScript compilado y no debe tratarse como una contraseña; protege los datos con las reglas de Firestore y limita la clave de API desde Google Cloud cuando sea posible.
+
+La compilacion web es independiente del APK: no modifica ni reemplaza `build/app/outputs/flutter-apk/app-release.apk`. El APK conserva su inicializacion Android de Firebase y se sigue compilando con `flutter build apk`.

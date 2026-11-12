@@ -1,0 +1,204 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner() {
+      return signedIn()
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'owner';
+    }
+
+    function membershipPath(leagueId, uid) {
+      return /databases/$(database)/documents/users/$(uid)/memberships/$(leagueId);
+    }
+
+    function leagueMemberPath(leagueId, uid) {
+      return /databases/$(database)/documents/leagues/$(leagueId)/members/$(uid);
+    }
+
+    function isLeagueMember(leagueId) {
+      return signedIn()
+        && exists(membershipPath(leagueId, request.auth.uid));
+    }
+
+    function isLeagueAdmin(leagueId) {
+      return isOwner()
+        || (isLeagueMember(leagueId)
+          && get(membershipPath(leagueId, request.auth.uid)).data.role == 'admin');
+    }
+
+    function invitationPath(code) {
+      return /databases/$(database)/documents/invitations/$(code);
+    }
+
+    function validInvitationMembership(leagueId, uid) {
+      let invitationId = request.resource.data.invitationId;
+      let invitation = get(invitationPath(invitationId));
+      return signedIn()
+        && uid == request.auth.uid
+        && invitationId is string
+        && invitation.data.used == false
+        && invitation.data.leagueId == leagueId
+        && invitation.data.role == request.resource.data.role
+        && getAfter(leagueMemberPath(leagueId, uid)).data.uid == uid
+        && getAfter(leagueMemberPath(leagueId, uid)).data.username == request.resource.data.username
+        && getAfter(leagueMemberPath(leagueId, uid)).data.leagueId == leagueId
+        && getAfter(leagueMemberPath(leagueId, uid)).data.invitationId == invitationId
+        && getAfter(leagueMemberPath(leagueId, uid)).data.role == request.resource.data.role;
+    }
+
+    function validLeagueMemberInvitation(leagueId, uid) {
+      let invitationId = request.resource.data.invitationId;
+      let invitation = get(invitationPath(invitationId));
+      return signedIn()
+        && uid == request.auth.uid
+        && invitationId is string
+        && invitation.data.used == false
+        && invitation.data.leagueId == leagueId
+        && invitation.data.role == request.resource.data.role
+        && getAfter(membershipPath(leagueId, uid)).data.uid == uid
+        && getAfter(membershipPath(leagueId, uid)).data.username == request.resource.data.username
+        && getAfter(membershipPath(leagueId, uid)).data.leagueId == leagueId
+        && getAfter(membershipPath(leagueId, uid)).data.invitationId == invitationId
+        && getAfter(membershipPath(leagueId, uid)).data.role == request.resource.data.role;
+    }
+
+    match /users/{uid} {
+      allow create: if signedIn()
+        && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['uid', 'username', 'role', 'createdAt'])
+        && request.resource.data.keys().hasAll(['uid', 'username', 'role', 'createdAt'])
+        && request.resource.data.uid == uid
+        && request.resource.data.role == 'viewer';
+
+      allow get: if signedIn() && (request.auth.uid == uid || isOwner());
+      allow list: if isOwner();
+      allow update, delete: if false;
+
+      match /memberships/{leagueId} {
+        allow get, list: if signedIn() && (request.auth.uid == uid || isOwner());
+        allow create: if isOwner()
+          || (request.resource.data.keys().hasOnly([
+              'uid', 'username', 'leagueId', 'role', 'invitationId', 'createdAt'
+            ])
+            && request.resource.data.keys().hasAll([
+              'uid', 'username', 'leagueId', 'role', 'invitationId', 'createdAt'
+            ])
+            && request.resource.data.uid == uid
+            && request.resource.data.leagueId == leagueId
+            && request.resource.data.role in ['admin', 'viewer']
+            && validInvitationMembership(leagueId, uid));
+        allow update: if isOwner()
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['role'])
+          && request.resource.data.role in ['admin', 'viewer'];
+        allow delete: if isOwner();
+      }
+    }
+
+    match /leagues/{leagueId} {
+      allow get: if isOwner() || isLeagueMember(leagueId);
+      allow list: if isOwner();
+      allow create: if isOwner()
+        && request.resource.data.keys().hasOnly([
+          'name', 'monthlyDues', 'createdBy', 'createdAt'
+        ])
+        && request.resource.data.keys().hasAll([
+          'name', 'monthlyDues', 'createdBy', 'createdAt'
+        ])
+        && request.resource.data.monthlyDues is int
+        && request.resource.data.monthlyDues > 0
+        && request.resource.data.monthlyDues <= 100000000
+        && request.resource.data.createdBy == request.auth.uid;
+      allow update: if
+        (isOwner()
+          && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['name', 'monthlyDues'])
+          && (!request.resource.data.diff(resource.data).affectedKeys()
+                .hasAny(['monthlyDues'])
+            || (request.resource.data.monthlyDues is int
+              && request.resource.data.monthlyDues > 0
+              && request.resource.data.monthlyDues <= 100000000)))
+        || (isLeagueAdmin(leagueId)
+          && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['monthlyDues'])
+          && request.resource.data.monthlyDues is int
+          && request.resource.data.monthlyDues > 0
+          && request.resource.data.monthlyDues <= 100000000);
+      allow delete: if false;
+
+      match /members/{uid} {
+        allow get, list: if isOwner()
+          || isLeagueAdmin(leagueId)
+          || (signedIn() && request.auth.uid == uid);
+        allow create: if isOwner()
+          || (request.resource.data.keys().hasOnly([
+              'uid', 'username', 'leagueId', 'role', 'invitationId', 'createdAt'
+            ])
+            && request.resource.data.keys().hasAll([
+              'uid', 'username', 'leagueId', 'role', 'invitationId', 'createdAt'
+            ])
+            && request.resource.data.uid == uid
+            && request.resource.data.leagueId == leagueId
+            && request.resource.data.role in ['admin', 'viewer']
+            && validLeagueMemberInvitation(leagueId, uid));
+        allow update: if isOwner()
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['role'])
+          && request.resource.data.role in ['admin', 'viewer'];
+        allow delete: if isOwner();
+      }
+
+      match /players/{playerId} {
+        allow read: if isOwner() || isLeagueMember(leagueId);
+        allow write: if isLeagueAdmin(leagueId);
+      }
+
+      match /games/{gameId} {
+        allow read: if isOwner() || isLeagueMember(leagueId);
+        allow write: if isLeagueAdmin(leagueId);
+      }
+
+      match /financeEntries/{entryId} {
+        allow read: if isOwner() || isLeagueMember(leagueId);
+        allow write: if isLeagueAdmin(leagueId);
+      }
+
+      match /state/{stateId} {
+        allow read: if isOwner() || isLeagueMember(leagueId);
+        allow write: if isLeagueAdmin(leagueId);
+      }
+    }
+
+    match /invitations/{code} {
+      allow get: if signedIn();
+      allow list: if false;
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly([
+          'leagueId', 'role', 'createdBy', 'used', 'createdAt'
+        ])
+        && request.resource.data.keys().hasAll([
+          'leagueId', 'role', 'createdBy', 'used', 'createdAt'
+        ])
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.used == false
+        && exists(/databases/$(database)/documents/leagues/$(request.resource.data.leagueId))
+        && ((isOwner() && request.resource.data.role in ['admin', 'viewer'])
+          || (isLeagueAdmin(request.resource.data.leagueId)
+            && request.resource.data.role == 'viewer'));
+      allow update: if signedIn()
+        && resource.data.used == false
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['used', 'usedBy', 'usedAt'])
+        && request.resource.data.used == true
+        && request.resource.data.usedBy == request.auth.uid
+        && request.resource.data.usedAt == request.time
+        && getAfter(membershipPath(resource.data.leagueId, request.auth.uid)).data.invitationId == code
+        && getAfter(membershipPath(resource.data.leagueId, request.auth.uid)).data.role == resource.data.role
+        && getAfter(leagueMemberPath(resource.data.leagueId, request.auth.uid)).data.invitationId == code
+        && getAfter(leagueMemberPath(resource.data.leagueId, request.auth.uid)).data.role == resource.data.role;
+      allow delete: if false;
+    }
+  }
+}
