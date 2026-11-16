@@ -6,10 +6,16 @@ Aplicacion Flutter para Android para registrar partidos 5 contra 5 y consultar e
 
 - Marcador horizontal para partidos por tiempo o por objetivo de puntos.
 - Estadisticas en vivo por jugador: puntos, rebotes, asistencias, triples (contados al anotar desde el boton de +3), robos de balon (ROB), balones perdidos (TO), tapas (BLK) y faltas personales (FP); los triples ya no tienen un contador manual en la fila de estadisticas.
+- Botones rapidos para anotar AST, REB, ROB, TO, BLK y FP por equipo, con seleccion del jugador; los controles individuales siguen disponibles para corregir estadisticas.
+- Sustituciones durante el partido: el marcador se conserva, cada jugador mantiene sus propias estadisticas y el resultado de ganado/perdido se asigna a quienes terminan jugando.
+- Aviso de faltas colectivas desde el limite configurado por liga (8 por defecto), incluyendo la falta que alcanza el limite y cada falta personal posterior.
+- Filtros de estadisticas por dia, semana, mes y siempre; ranking de mejor jugador por partido o periodo con el indice PTS + REB + AST + ROB + BLK - TO.
 - Opcion para finalizar y guardar un partido o salir descartandolo sin guardar el resultado ni las estadisticas.
 - Plantel, historial, rankings completos, comparacion cara a cara y resultados por companero.
 - Administradores pueden editar el nombre de un jugador; el ID y las estadisticas historicas se conservan.
 - Finanzas mensuales: cuota por jugador configurable para cada liga (RD$300 inicial en Liga La Fe y ligas nuevas), con abonos parciales y método de pago en efectivo o depósito; los selectores muestran solo el mes actual y el siguiente, para registrar pagos por adelantado sin cargar la lista. Incluye aportes comprometidos configurables por nombre (opcionales por liga), ingresos de VISITAS, gastos generales y resumen de pagos a dueños de cancha.
+- Envío por WhatsApp del estado de cuota de cada miembro y de un resumen mensual para compartir con cualquier contacto o grupo desde el selector de chats de WhatsApp.
+- Corrección de anotación: al sumar o restar un punto se elige a qué jugador atribuirlo; permite corregir un triple como canasta de dos.
 - Eliminacion de partidos finalizados solo para administradores y propietario; al borrarlos se excluyen tambien sus estadisticas de los totales y comparaciones.
 - El historial muestra un resumen compacto de cada partido finalizado; el desglose de jugadores y estadisticas se puede expandir individualmente.
 - Icono propio de pizarra y balon para el APK y la aplicacion web.
@@ -49,7 +55,7 @@ La aplicacion convierte internamente cada nombre de usuario a una direccion de a
 
 La migracion inicia con una base de datos nueva: los registros experimentales de `pizarrafe` no se copian. Las cuentas antiguas tampoco se transfieren; todos los usuarios, incluido `rreyes`, se crean de nuevo. El proyecto `pizarrafe` y sus datos no se modifican. No compartas codigos de invitacion publicamente.
 
-Para el control de cuotas, cada jugador del plantel se considera miembro sujeto al monto mensual definido para su liga. Un administrador puede cambiarlo en **Finanzas > Configuración de finanzas**; el cambio no altera movimientos ya registrados. La cuota inicial es RD$300. En esa misma configuración puedes escribir el nombre de quien aporta mensualmente o dejar **Aportante fijo (opcional)** en blanco. El compromiso es de RD$2,000 y se controla separado de las cuotas. Los pagos de jugadores visitantes se registran con **Registrar pago de VISITAS** y aparecen como ingresos bajo **VISITAS**; no tienen monto mínimo ni máximo configurado. Para registrar una cuota adelantada, abre **Registrar cuota**, selecciona el miembro y el mes futuro que está pagando; el sistema guarda el abono en ese mes y calcula allí el saldo pendiente, aunque el mes actual ya esté pagado.
+Para el control de cuotas, cada jugador del plantel se considera miembro sujeto al monto mensual definido para su liga. Un administrador puede cambiarlo en **Finanzas > Configuración de finanzas**; el cambio no altera movimientos ya registrados. La cuota inicial es RD$300. En esa misma configuración puedes escribir el nombre de quien aporta mensualmente o dejar **Aportante fijo (opcional)** en blanco. El compromiso es de RD$2,000 y se controla separado de las cuotas. El límite de faltas colectivas también se configura por liga (8 por defecto); publica las reglas actualizadas de `firestore.rules` para poder cambiarlo. Los pagos de jugadores visitantes se registran con **Registrar pago de VISITAS** y aparecen como ingresos bajo **VISITAS**; no tienen monto mínimo ni máximo configurado. Para registrar una cuota adelantada, abre **Registrar cuota**, selecciona el miembro y el mes futuro que está pagando; el sistema guarda el abono en ese mes y calcula allí el saldo pendiente, aunque el mes actual ya esté pagado.
 
 ## Ejecutar y compilar
 
@@ -86,3 +92,12 @@ El inicio de sesion abre Google en el navegador; autoriza Firebase CLI con la cu
 Los usuarios de iPhone/iPad podrán abrir el enlace en Safari y agregarlo a la pantalla de inicio. El registro y los datos compartidos siguen usando Firebase. La configuracion web se incluye en el JavaScript compilado y no debe tratarse como una contraseña; protege los datos con las reglas de Firestore y limita la clave de API desde Google Cloud cuando sea posible.
 
 La compilacion web es independiente del APK: no modifica ni reemplaza `build/app/outputs/flutter-apk/app-release.apk`. El APK usa el `google-services.json` del proyecto `pizarraliga` y se sigue compilando con `flutter build apk`.
+
+
+PARA ACTUALIZAR LA VERSION WEB
+https://pizarraliga.firebaseapp.com/
+- PS C:\Users\Sr Cardenal\PIZARRA> firebase.cmd login
+- PS C:\Users\Sr Cardenal\PIZARRA> & "$env:APPDATA\npm\firebase.cmd" login
+- PS C:\Users\Sr Cardenal\PIZARRA> & "$env:APPDATA\npm\firebase.cmd" apps:list WEB --project pizarraliga
+- PS C:\Users\Sr Cardenal\PIZARRA> powershell -ExecutionPolicy Bypass -File ".\tool\deploy_web.ps1" -WebAppId "1:801761334897:web:2138d7f176bb39a5466dd0"   (NOTA ESE CODIGO ES EL QUE DA EL TERCER COMANDO)
+

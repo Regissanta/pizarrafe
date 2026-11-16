@@ -37,6 +37,7 @@ abstract interface class LeagueBackend {
     String leagueId,
     int monthlyDues,
     String contributionName,
+    int? teamFoulLimit,
   );
   Future<String> createInvitation(String leagueId, String role);
   Future<void> redeemInvitation(String code);
@@ -320,6 +321,7 @@ class FirebaseLeagueBackend implements LeagueBackend {
     String leagueId,
     int monthlyDues,
     String contributionName,
+    int? teamFoulLimit,
   ) async {
     if (monthlyDues < 1 || monthlyDues > 100000000) {
       throw RangeError.range(monthlyDues, 1, 100000000, 'monthlyDues');
@@ -330,9 +332,15 @@ class FirebaseLeagueBackend implements LeagueBackend {
         'El nombre no puede tener más de 60 caracteres.',
       );
     }
-    await _league(
-      leagueId,
-    ).update({'monthlyDues': monthlyDues, 'contributionName': cleanName});
+    if (teamFoulLimit != null && (teamFoulLimit < 1 || teamFoulLimit > 100)) {
+      throw RangeError.range(teamFoulLimit, 1, 100, 'teamFoulLimit');
+    }
+    final updates = <String, dynamic>{
+      'monthlyDues': monthlyDues,
+      'contributionName': cleanName,
+    };
+    if (teamFoulLimit != null) updates['teamFoulLimit'] = teamFoulLimit;
+    await _league(leagueId).update(updates);
   }
 
   @override

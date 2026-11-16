@@ -95,3 +95,81 @@ String formatPesos(int amount) {
   final sign = amount < 0 ? '-' : '';
   return 'RD\$ $sign$grouped';
 }
+
+String buildMemberDuesWhatsAppMessage({
+  required String leagueName,
+  required String memberId,
+  required String memberName,
+  required String period,
+  required int monthlyDues,
+  required int received,
+  required List<FinanceEntry> payments,
+}) {
+  final memberPayments =
+      payments
+          .where(
+            (entry) =>
+                entry.kind == 'dues' &&
+                entry.period == period &&
+                entry.memberId == memberId,
+          )
+          .toList()
+        ..sort((a, b) => a.date.compareTo(b.date));
+  final pending = (monthlyDues - received).clamp(0, monthlyDues);
+  final paymentLines =
+      memberPayments.isEmpty
+          ? ['No hay pagos registrados este mes.']
+          : memberPayments.map((entry) {
+            final date =
+                '${entry.date.day.toString().padLeft(2, '0')}/'
+                '${entry.date.month.toString().padLeft(2, '0')}/'
+                '${entry.date.year}';
+            final method = switch (entry.paymentMethod) {
+              'cash' => ' · Efectivo',
+              'deposit' => ' · Depósito',
+              _ => '',
+            };
+            return '• $date: ${formatPesos(entry.amount)}$method';
+          }).toList();
+
+  return [
+    'Hola $memberName,',
+    'Resumen de cuota de $leagueName · ${financePeriodLabel(period)}',
+    'Cuota mensual: ${formatPesos(monthlyDues)}',
+    'Pagos registrados:',
+    ...paymentLines,
+    'Total abonado: ${formatPesos(received)}',
+    if (pending > 0)
+      'Pendiente: ${formatPesos(pending)}'
+    else
+      'Estado: cuota completa',
+    if (received > monthlyDues)
+      'Excedente: ${formatPesos(received - monthlyDues)}',
+  ].join('\n');
+}
+
+String buildLeagueDuesWhatsAppMessage({
+  required String leagueName,
+  required String period,
+  required int monthlyDues,
+  required List<({String name, int received})> members,
+}) {
+  final totalExpected = members.length * monthlyDues;
+  final totalReceived = members.fold(
+    0,
+    (total, member) => total + member.received,
+  );
+  return [
+    'Resumen de cuotas · $leagueName · ${financePeriodLabel(period)}',
+    ...members.map((member) {
+      final pending = (monthlyDues - member.received).clamp(0, monthlyDues);
+      return '• ${member.name}: abonado ${formatPesos(member.received)}'
+          '${pending > 0 ? ' · pendiente ${formatPesos(pending)}' : ' · completo'}';
+    }),
+    'Total recibido: ${formatPesos(totalReceived)} de '
+        '${formatPesos(totalExpected)} esperados',
+  ].join('\n');
+}
+
+Uri whatsAppShareUri(String message) =>
+    Uri.https('wa.me', '/', {'text': message});

@@ -103,7 +103,7 @@ service cloud.firestore {
       allow list: if isOwner();
       allow create: if isOwner()
         && request.resource.data.keys().hasOnly([
-          'name', 'monthlyDues', 'createdBy', 'createdAt'
+          'name', 'monthlyDues', 'teamFoulLimit', 'createdBy', 'createdAt'
         ])
         && request.resource.data.keys().hasAll([
           'name', 'monthlyDues', 'createdBy', 'createdAt'
@@ -111,11 +111,15 @@ service cloud.firestore {
         && request.resource.data.monthlyDues is int
         && request.resource.data.monthlyDues > 0
         && request.resource.data.monthlyDues <= 100000000
+        && (!request.resource.data.keys().hasAny(['teamFoulLimit'])
+          || (request.resource.data.teamFoulLimit is int
+            && request.resource.data.teamFoulLimit > 0
+            && request.resource.data.teamFoulLimit <= 100))
         && request.resource.data.createdBy == request.auth.uid;
       allow update: if
         (isOwner()
           && request.resource.data.diff(resource.data).affectedKeys()
-            .hasOnly(['name', 'monthlyDues', 'contributionName'])
+            .hasOnly(['name', 'monthlyDues', 'contributionName', 'teamFoulLimit'])
           && (!request.resource.data.diff(resource.data).affectedKeys()
                 .hasAny(['monthlyDues'])
             || (request.resource.data.monthlyDues is int
@@ -124,10 +128,15 @@ service cloud.firestore {
           && (!request.resource.data.diff(resource.data).affectedKeys()
                 .hasAny(['contributionName'])
             || (request.resource.data.contributionName is string
-              && request.resource.data.contributionName.size() <= 60)))
+              && request.resource.data.contributionName.size() <= 60))
+          && (!request.resource.data.diff(resource.data).affectedKeys()
+                .hasAny(['teamFoulLimit'])
+            || (request.resource.data.teamFoulLimit is int
+              && request.resource.data.teamFoulLimit > 0
+              && request.resource.data.teamFoulLimit <= 100)))
         || (isLeagueAdmin(leagueId)
           && request.resource.data.diff(resource.data).affectedKeys()
-            .hasOnly(['monthlyDues', 'contributionName'])
+            .hasOnly(['monthlyDues', 'contributionName', 'teamFoulLimit'])
           && (!request.resource.data.diff(resource.data).affectedKeys()
                 .hasAny(['monthlyDues'])
             || (request.resource.data.monthlyDues is int
@@ -136,7 +145,12 @@ service cloud.firestore {
           && (!request.resource.data.diff(resource.data).affectedKeys()
                 .hasAny(['contributionName'])
             || (request.resource.data.contributionName is string
-              && request.resource.data.contributionName.size() <= 60)));
+              && request.resource.data.contributionName.size() <= 60))
+          && (!request.resource.data.diff(resource.data).affectedKeys()
+                .hasAny(['teamFoulLimit'])
+            || (request.resource.data.teamFoulLimit is int
+              && request.resource.data.teamFoulLimit > 0
+              && request.resource.data.teamFoulLimit <= 100)));
       allow delete: if false;
 
       match /members/{uid} {

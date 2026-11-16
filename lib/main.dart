@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import 'finance.dart';
 import 'firebase_web_options.dart';
@@ -30,6 +31,7 @@ Future<void> main() async {
       DeviceOrientation.landscapeRight,
     ]);
   }
+
   try {
     await Firebase.initializeApp(
       options: kIsWeb ? FirebaseWebOptions.current : null,
@@ -111,19 +113,26 @@ class Game {
     required this.target,
     required this.durationSeconds,
     required this.startedAt,
+    List<String>? activeHomePlayers,
+    List<String>? activeAwayPlayers,
+    this.resultPlayerIds,
     this.homeScore = 0,
     this.awayScore = 0,
     this.remainingSeconds = 0,
     this.running = false,
     this.finished = false,
     this.lines = const [],
-  });
+  }) : activeHomePlayers = activeHomePlayers ?? List.of(homePlayers),
+       activeAwayPlayers = activeAwayPlayers ?? List.of(awayPlayers);
 
   String id;
   final String home;
   final String away;
   final List<String> homePlayers;
   final List<String> awayPlayers;
+  List<String> activeHomePlayers;
+  List<String> activeAwayPlayers;
+  List<String>? resultPlayerIds;
   final String mode;
   final int target;
   final int durationSeconds;
@@ -146,6 +155,58 @@ class Game {
     );
   }
 
+  List<String> activePlayersFor(String team) =>
+      team == 'home' ? activeHomePlayers : activeAwayPlayers;
+
+  bool substitute(String team, String outgoingId, String incomingId) {
+    if (team != 'home' && team != 'away' || outgoingId == incomingId) {
+      return false;
+    }
+    final active = activePlayersFor(team);
+    final teamPlayers = team == 'home' ? homePlayers : awayPlayers;
+    final opponents = team == 'home' ? awayPlayers : homePlayers;
+    if (!active.contains(outgoingId) ||
+        active.contains(incomingId) ||
+        opponents.contains(incomingId)) {
+      return false;
+    }
+    if (!teamPlayers.contains(incomingId)) teamPlayers.add(incomingId);
+    active[active.indexOf(outgoingId)] = incomingId;
+    return true;
+  }
+
+  void recordResultPlayers() {
+    resultPlayerIds = [...activeHomePlayers, ...activeAwayPlayers];
+  }
+
+  bool removePoint(
+    String team, {
+    required String playerId,
+    bool correctThreeToTwo = false,
+  }) {
+    if (team != 'home' && team != 'away') return false;
+    final score = team == 'home' ? homeScore : awayScore;
+    if (score <= 0) return false;
+
+    final roster = team == 'home' ? homePlayers : awayPlayers;
+    if (!roster.contains(playerId)) return false;
+    final playerLines = lines.where((line) => line.playerId == playerId);
+    if (playerLines.isEmpty || playerLines.first.points <= 0) return false;
+    final line = playerLines.first;
+    if (correctThreeToTwo && (line.points < 3 || line.threes == 0)) {
+      return false;
+    }
+
+    if (team == 'home') {
+      homeScore--;
+    } else {
+      awayScore--;
+    }
+    line.points--;
+    if (correctThreeToTwo) line.threes--;
+    return true;
+  }
+
   void ensureHistoryId() {
     if (id == 'active') {
       id = DateTime.now().microsecondsSinceEpoch.toString();
@@ -158,6 +219,9 @@ class Game {
     'away': away,
     'homePlayers': homePlayers,
     'awayPlayers': awayPlayers,
+    'activeHomePlayers': activeHomePlayers,
+    'activeAwayPlayers': activeAwayPlayers,
+    'resultPlayerIds': resultPlayerIds,
     'mode': mode,
     'target': target,
     'durationSeconds': durationSeconds,
@@ -176,6 +240,13 @@ class Game {
     away: json['away'] as String,
     homePlayers: List<String>.from(json['homePlayers'] as List? ?? []),
     awayPlayers: List<String>.from(json['awayPlayers'] as List? ?? []),
+    activeHomePlayers: List<String>.from(
+      json['activeHomePlayers'] as List? ?? json['homePlayers'] as List? ?? [],
+    ),
+    activeAwayPlayers: List<String>.from(
+      json['activeAwayPlayers'] as List? ?? json['awayPlayers'] as List? ?? [],
+    ),
+    resultPlayerIds: (json['resultPlayerIds'] as List?)?.cast<String>(),
     mode: json['mode'] as String? ?? 'points',
     target: json['target'] as int? ?? 21,
     durationSeconds: json['durationSeconds'] as int? ?? 600,
@@ -284,6 +355,16 @@ class _LigaAppState extends State<LigaApp> {
       }
     }
     return '';
+  }
+
+  int get _teamFoulLimit {
+    for (final league in _availableLeagues) {
+      if (league['id'] == _selectedLeagueId) {
+        final limit = league['teamFoulLimit'];
+        if (limit is int && limit > 0) return limit;
+      }
+    }
+    return 8;
   }
 
   String get _selectedLeagueName {
@@ -704,9 +785,10 @@ class _LigaAppState extends State<LigaApp> {
           game.awayPlayers.contains(playerId);
       if (!appeared) continue;
       totals.games++;
-      if (game.homeScore == game.awayScore) {
-        // A draw is an appearance, but not a win or loss.
-      } else {
+      final eligibleForResult =
+          game.resultPlayerIds == null ||
+          game.resultPlayerIds!.contains(playerId);
+      if (eligibleForResult && game.homeScore != game.awayScore) {
         final playerWon =
             game.homeScore > game.awayScore
                 ? game.homePlayers.contains(playerId)
@@ -820,6 +902,7 @@ class _LigaAppState extends State<LigaApp> {
         _scoreLimitReached(game)) {
       return;
     }
+    final team = game.homePlayers.contains(playerId) ? 'home' : 'away';
     setState(() {
       final line = game.lineFor(playerId);
       switch (stat) {
@@ -838,7 +921,30 @@ class _LigaAppState extends State<LigaApp> {
               (line.personalFouls + amount).clamp(0, 999).toInt();
       }
     });
+    if (stat == 'personalFouls' &&
+        amount > 0 &&
+        _teamFouls(game, team) >= _teamFoulLimit) {
+      final messenger = _messengerKey.currentState;
+      messenger?.hideCurrentSnackBar();
+      messenger?.showSnackBar(
+        SnackBar(
+          content: Text(
+            '${team == 'home' ? game.home : game.away}: falta colectiva '
+            '${_teamFouls(game, team)}. '
+            'Desde la falta $_teamFoulLimit (incluida), hay tiros libres '
+            'por cada falta personal.',
+          ),
+        ),
+      );
+    }
     await _save();
+  }
+
+  int _teamFouls(Game game, String team) {
+    final ids = team == 'home' ? game.homePlayers : game.awayPlayers;
+    return game.lines
+        .where((line) => ids.contains(line.playerId))
+        .fold(0, (total, line) => total + line.personalFouls);
   }
 
   Future<void> _finishGame() async {
@@ -855,6 +961,7 @@ class _LigaAppState extends State<LigaApp> {
     _timer?.cancel();
     final activeGameId = game.id;
     game.ensureHistoryId();
+    game.recordResultPlayers();
     _finishingGame = true;
     _finishError = null;
     if (mounted) setState(() {});
@@ -908,7 +1015,12 @@ class _LigaAppState extends State<LigaApp> {
     await _save();
   }
 
-  Future<void> _adjustScore(String team, int amount) async {
+  Future<void> _adjustScore(
+    String team,
+    int amount, {
+    String? playerId,
+    bool correctThreeToTwo = false,
+  }) async {
     final game = activeGame;
     if (!_canWrite ||
         game == null ||
@@ -918,19 +1030,161 @@ class _LigaAppState extends State<LigaApp> {
       return;
     }
     var reachedTarget = false;
+    var changed = true;
     setState(() {
-      if (team == 'home') {
-        game.homeScore = (game.homeScore + amount).clamp(0, 999).toInt();
+      if (amount < 0) {
+        if (playerId == null) {
+          changed = false;
+          return;
+        }
+        changed = game.removePoint(
+          team,
+          playerId: playerId,
+          correctThreeToTwo: correctThreeToTwo,
+        );
       } else {
-        game.awayScore = (game.awayScore + amount).clamp(0, 999).toInt();
+        if (team == 'home') {
+          game.homeScore = (game.homeScore + amount).clamp(0, 999).toInt();
+        } else {
+          game.awayScore = (game.awayScore + amount).clamp(0, 999).toInt();
+        }
       }
       reachedTarget = _scoreLimitReached(game);
     });
+    if (!changed) return;
     if (reachedTarget) {
       await _finishGame();
       return;
     }
     await _save();
+  }
+
+  Future<void> _choosePointRemoval(String team) async {
+    if (!_canWrite) return;
+    final game = activeGame;
+    if (game == null) return;
+    final overlayContext = _navigatorKey.currentContext;
+    if (overlayContext == null) return;
+    final roster = team == 'home' ? game.homePlayers : game.awayPlayers;
+    final removal =
+        await showModalBottomSheet<({String playerId, bool correctThreeToTwo})>(
+          context: overlayContext,
+          backgroundColor: _surface,
+          builder:
+              (context) => SafeArea(
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Padding(
+                        padding: EdgeInsets.all(18),
+                        child: Text(
+                          '¿A quién quitarle 1 punto?',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 18,
+                          ),
+                        ),
+                      ),
+                      ...roster.map((id) {
+                        final player = _player(id);
+                        final line = game.lines.where(
+                          (item) => item.playerId == id,
+                        );
+                        final points = line.isEmpty ? 0 : line.first.points;
+                        final threes = line.isEmpty ? 0 : line.first.threes;
+                        if (points <= 0) return const SizedBox.shrink();
+                        return ListTile(
+                          leading: const CircleAvatar(
+                            child: Icon(Icons.person),
+                          ),
+                          title: Text(player?.name ?? 'Jugador'),
+                          subtitle: Text('PTS $points · 3PT $threes'),
+                          onTap:
+                              () => Navigator.pop(context, (
+                                playerId: id,
+                                correctThreeToTwo: false,
+                              )),
+                          trailing:
+                              threes > 0 && points >= 3
+                                  ? TextButton(
+                                    onPressed:
+                                        () => Navigator.pop(context, (
+                                          playerId: id,
+                                          correctThreeToTwo: true,
+                                        )),
+                                    child: const Text('3PT → 2PT'),
+                                  )
+                                  : null,
+                        );
+                      }),
+                    ],
+                  ),
+                ),
+              ),
+        );
+    if (removal == null || activeGame != game) return;
+    await _adjustScore(
+      team,
+      -1,
+      playerId: removal.playerId,
+      correctThreeToTwo: removal.correctThreeToTwo,
+    );
+  }
+
+  Future<void> _shareMemberDues(Player player) async {
+    final message = buildMemberDuesWhatsAppMessage(
+      leagueName: _selectedLeagueName,
+      memberId: player.id,
+      memberName: player.name,
+      period: _selectedFinancePeriod,
+      monthlyDues: _monthlyDues,
+      received: _receivedForMember(player.id, _selectedFinancePeriod),
+      payments:
+          financeEntries.where((entry) => entry.memberId == player.id).toList(),
+    );
+    await _shareViaWhatsApp(message);
+  }
+
+  Future<void> _shareLeagueDues() async {
+    final message = buildLeagueDuesWhatsAppMessage(
+      leagueName: _selectedLeagueName,
+      period: _selectedFinancePeriod,
+      monthlyDues: _monthlyDues,
+      members:
+          players
+              .map(
+                (player) => (
+                  name: player.name,
+                  received: _receivedForMember(
+                    player.id,
+                    _selectedFinancePeriod,
+                  ),
+                ),
+              )
+              .toList(),
+    );
+    await _shareViaWhatsApp(message);
+  }
+
+  Future<void> _shareViaWhatsApp(String message) async {
+    try {
+      final opened = await launchUrl(
+        whatsAppShareUri(message),
+        mode: LaunchMode.externalApplication,
+      );
+      if (!opened && mounted) {
+        _messengerKey.currentState?.showSnackBar(
+          const SnackBar(content: Text('No se pudo abrir WhatsApp.')),
+        );
+      }
+    } catch (error) {
+      if (mounted) {
+        _messengerKey.currentState?.showSnackBar(
+          SnackBar(content: Text('No se pudo abrir WhatsApp: $error')),
+        );
+      }
+    }
   }
 
   @override
@@ -1740,7 +1994,7 @@ class _LigaAppState extends State<LigaApp> {
         '${(game.remainingSeconds ~/ 60).toString().padLeft(2, '0')}:${(game.remainingSeconds % 60).toString().padLeft(2, '0')}';
     return SafeArea(
       child: ListView(
-        padding: const EdgeInsets.fromLTRB(14, 0, 14, 16),
+        padding: const EdgeInsets.fromLTRB(14, 0, 14, 96),
         children: [
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -1899,7 +2153,7 @@ class _LigaAppState extends State<LigaApp> {
     final isHome = team == 'home';
     final name = isHome ? game.home : game.away;
     final score = isHome ? game.homeScore : game.awayScore;
-    final roster = isHome ? game.homePlayers : game.awayPlayers;
+    final roster = game.activePlayersFor(team);
     return Column(
       children: [
         Text(
@@ -1960,8 +2214,11 @@ class _LigaAppState extends State<LigaApp> {
               visualDensity: VisualDensity.compact,
               tooltip: 'Restar punto',
               onPressed:
-                  _canWrite && !_finishingGame && !_scoreLimitReached(game)
-                      ? () => _adjustScore(team, -1)
+                  _canWrite &&
+                          score > 0 &&
+                          !_finishingGame &&
+                          !_scoreLimitReached(game)
+                      ? () => _choosePointRemoval(team)
                       : null,
               icon: const Icon(Icons.remove_circle_outline, size: 19),
             ),
@@ -1974,15 +2231,50 @@ class _LigaAppState extends State<LigaApp> {
               tooltip: 'Sumar punto',
               onPressed:
                   _canWrite && !_finishingGame && !_scoreLimitReached(game)
-                      ? () => _adjustScore(team, 1)
+                      ? () => _chooseScorer(team, 1, allowUnassigned: false)
                       : null,
               icon: const Icon(Icons.add_circle_outline, size: 19),
             ),
           ],
         ),
+        const SizedBox(height: 4),
+        Wrap(
+          alignment: WrapAlignment.center,
+          spacing: 3,
+          runSpacing: 2,
+          children: [
+            _quickStatButton(team, 'assists', 'AST'),
+            _quickStatButton(team, 'rebounds', 'REB'),
+            _quickStatButton(team, 'steals', 'ROB'),
+            _quickStatButton(team, 'turnovers', 'TO'),
+            _quickStatButton(team, 'blocks', 'BLK'),
+            _quickStatButton(team, 'personalFouls', 'FP'),
+          ],
+        ),
       ],
     );
   }
+
+  Widget _quickStatButton(String team, String stat, String label) => SizedBox(
+    height: 28,
+    child: Tooltip(
+      message: 'Anotar $label',
+      child: OutlinedButton(
+        onPressed:
+            !_canWrite || _finishingGame || _scoreLimitReached(activeGame!)
+                ? null
+                : () => _chooseStatPlayer(team, stat, label),
+        style: OutlinedButton.styleFrom(
+          padding: const EdgeInsets.symmetric(horizontal: 6),
+          minimumSize: Size.zero,
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          visualDensity: VisualDensity.compact,
+          side: BorderSide(color: Colors.white.withValues(alpha: .14)),
+        ),
+        child: Text(label, style: const TextStyle(fontSize: 10)),
+      ),
+    ),
+  );
 
   Widget _scoreButton(
     String team,
@@ -2014,13 +2306,17 @@ class _LigaAppState extends State<LigaApp> {
     );
   }
 
-  Future<void> _chooseScorer(String team, int points) async {
+  Future<void> _chooseScorer(
+    String team,
+    int points, {
+    bool allowUnassigned = true,
+  }) async {
     if (!_canWrite) return;
     final game = activeGame;
     if (game == null) return;
     final overlayContext = _navigatorKey.currentContext;
     if (overlayContext == null) return;
-    final roster = team == 'home' ? game.homePlayers : game.awayPlayers;
+    final roster = game.activePlayersFor(team);
     final selected = await showModalBottomSheet<String>(
       context: overlayContext,
       backgroundColor: _surface,
@@ -2048,17 +2344,18 @@ class _LigaAppState extends State<LigaApp> {
                       onTap: () => Navigator.pop(context, id),
                     );
                   }),
-                  ListTile(
-                    leading: const Icon(
-                      Icons.person_off_outlined,
-                      color: _muted,
+                  if (allowUnassigned)
+                    ListTile(
+                      leading: const Icon(
+                        Icons.person_off_outlined,
+                        color: _muted,
+                      ),
+                      title: const Text(
+                        'Punto sin atribuir',
+                        style: TextStyle(color: _muted),
+                      ),
+                      onTap: () => Navigator.pop(context, ''),
                     ),
-                    title: const Text(
-                      'Punto sin atribuir',
-                      style: TextStyle(color: _muted),
-                    ),
-                    onTap: () => Navigator.pop(context, ''),
-                  ),
                 ],
               ),
             ),
@@ -2066,6 +2363,114 @@ class _LigaAppState extends State<LigaApp> {
     );
     if (selected == null) return;
     await _score(team, selected.isEmpty ? null : selected, points);
+  }
+
+  Future<void> _chooseStatPlayer(String team, String stat, String label) async {
+    if (!_canWrite) return;
+    final game = activeGame;
+    if (game == null) return;
+    final overlayContext = _navigatorKey.currentContext;
+    if (overlayContext == null) return;
+    final selected = await showModalBottomSheet<String>(
+      context: overlayContext,
+      backgroundColor: _surface,
+      builder:
+          (context) => SafeArea(
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.all(18),
+                    child: Text(
+                      '¿A quién anotar $label?',
+                      style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 18,
+                      ),
+                    ),
+                  ),
+                  ...game.activePlayersFor(team).map((id) {
+                    final player = _player(id);
+                    return ListTile(
+                      leading: const CircleAvatar(child: Icon(Icons.person)),
+                      title: Text(player?.name ?? 'Jugador'),
+                      onTap: () => Navigator.pop(context, id),
+                    );
+                  }),
+                ],
+              ),
+            ),
+          ),
+    );
+    if (selected == null || activeGame != game) return;
+    await _adjustStat(selected, stat, 1);
+  }
+
+  Future<void> _replacePlayer(String team, String outgoingId) async {
+    if (!_canWrite || activeGame == null) return;
+    final game = activeGame!;
+    final teamPlayers = team == 'home' ? game.homePlayers : game.awayPlayers;
+    final opponents = team == 'home' ? game.awayPlayers : game.homePlayers;
+    final candidates =
+        players
+            .where(
+              (player) =>
+                  player.id != outgoingId &&
+                  !opponents.contains(player.id) &&
+                  (!teamPlayers.contains(player.id) ||
+                      !game.activePlayersFor(team).contains(player.id)),
+            )
+            .toList();
+    if (candidates.isEmpty) {
+      _messengerKey.currentState?.showSnackBar(
+        const SnackBar(
+          content: Text('No hay sustitutos disponibles fuera del otro equipo.'),
+        ),
+      );
+      return;
+    }
+    final overlayContext = _navigatorKey.currentContext;
+    if (overlayContext == null) return;
+    final incomingId = await showModalBottomSheet<String>(
+      context: overlayContext,
+      backgroundColor: _surface,
+      builder:
+          (context) => SafeArea(
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.all(18),
+                    child: Text(
+                      'Sustituir a ${_player(outgoingId)?.name ?? 'Jugador'}',
+                      style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 18,
+                      ),
+                    ),
+                  ),
+                  ...candidates.map(
+                    (player) => ListTile(
+                      leading: const CircleAvatar(
+                        child: Icon(Icons.person_add),
+                      ),
+                      title: Text(player.name),
+                      onTap: () => Navigator.pop(context, player.id),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+    );
+    if (incomingId == null || activeGame != game) return;
+    if (!game.substitute(team, outgoingId, incomingId)) {
+      throw StateError('No se pudo completar la sustitución.');
+    }
+    setState(() {});
+    await _save();
   }
 
   Widget _teamStats(Game game, String team, Color color) {
@@ -2092,23 +2497,53 @@ class _LigaAppState extends State<LigaApp> {
               style: TextStyle(color: _muted),
             )
           else
-            ...ids.map((id) => _playerLiveRow(id)),
+            Text(
+              'Faltas de equipo: ${_teamFouls(game, team)} / $_teamFoulLimit',
+              style: TextStyle(
+                color:
+                    _teamFouls(game, team) >= _teamFoulLimit ? _orange : _muted,
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          const SizedBox(height: 6),
+          ...ids.map((id) => _playerLiveRow(id, team)),
         ],
       ),
     );
   }
 
-  Widget _playerLiveRow(String id) {
+  Widget _playerLiveRow(String id, String team) {
     final player = _player(id);
     final line = activeGame!.lineFor(id);
+    final active = activeGame!.activePlayersFor(team).contains(id);
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 7),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            player?.name ?? 'Jugador',
-            style: const TextStyle(fontWeight: FontWeight.w700),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  '${player?.name ?? 'Jugador'}${active ? '' : ' · En banca'}',
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+              ),
+              if (active && _canWrite)
+                IconButton(
+                  tooltip: 'Sustituir ${player?.name ?? 'jugador'}',
+                  visualDensity: VisualDensity.compact,
+                  constraints: const BoxConstraints(
+                    minWidth: 32,
+                    minHeight: 32,
+                  ),
+                  padding: EdgeInsets.zero,
+                  onPressed:
+                      _finishingGame ? null : () => _replacePlayer(team, id),
+                  icon: const Icon(Icons.swap_horiz, size: 19),
+                ),
+            ],
           ),
           const SizedBox(height: 6),
           Wrap(
@@ -2524,14 +2959,16 @@ class _LigaAppState extends State<LigaApp> {
     if (!_canWrite || _selectedLeagueId == null) return;
     var amountText = '$_monthlyDues';
     var contributionName = _contributionName;
+    var teamFoulLimitText = '$_teamFoulLimit';
     String? validationError;
-    final settings = await showDialog<(int, String)>(
+    String? foulLimitValidationError;
+    final settings = await showDialog<(int, String, int)>(
       context: _navigatorKey.currentContext!,
       builder:
           (context) => StatefulBuilder(
             builder:
                 (context, setDialogState) => AlertDialog(
-                  title: const Text('Configuración de finanzas'),
+                  title: const Text('Configuración de liga'),
                   content: SingleChildScrollView(
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
@@ -2561,6 +2998,18 @@ class _LigaAppState extends State<LigaApp> {
                           ),
                         ),
                         const SizedBox(height: 8),
+                        TextFormField(
+                          initialValue: teamFoulLimitText,
+                          keyboardType: TextInputType.number,
+                          onChanged: (value) => teamFoulLimitText = value,
+                          decoration: InputDecoration(
+                            labelText: 'Límite de faltas de equipo',
+                            helperText:
+                                'Avisar por cada falta personal desde este número.',
+                            errorText: foulLimitValidationError,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
                         const Text(
                           'Los cambios de cuota aplican a saldos futuros y no modifican movimientos registrados.',
                           style: TextStyle(color: _muted, fontSize: 12),
@@ -2576,6 +3025,9 @@ class _LigaAppState extends State<LigaApp> {
                     FilledButton(
                       onPressed: () {
                         final value = int.tryParse(amountText.trim());
+                        final foulLimit = int.tryParse(
+                          teamFoulLimitText.trim(),
+                        );
                         if (value == null || value < 1 || value > 100000000) {
                           setDialogState(
                             () =>
@@ -2584,7 +3036,21 @@ class _LigaAppState extends State<LigaApp> {
                           );
                           return;
                         }
-                        Navigator.pop(context, (value, contributionName));
+                        if (foulLimit == null ||
+                            foulLimit < 1 ||
+                            foulLimit > 100) {
+                          setDialogState(
+                            () =>
+                                foulLimitValidationError =
+                                    'Escribe un límite entre 1 y 100.',
+                          );
+                          return;
+                        }
+                        Navigator.pop(context, (
+                          value,
+                          contributionName,
+                          foulLimit,
+                        ));
                       },
                       child: const Text('Guardar'),
                     ),
@@ -2595,8 +3061,14 @@ class _LigaAppState extends State<LigaApp> {
     if (settings == null) return;
     final leagueId = _selectedLeagueId;
     if (leagueId == null) return;
+    final foulLimitChanged = settings.$3 != _teamFoulLimit;
     try {
-      await _backend.updateFinanceSettings(leagueId, settings.$1, settings.$2);
+      await _backend.updateFinanceSettings(
+        leagueId,
+        settings.$1,
+        settings.$2,
+        foulLimitChanged ? settings.$3 : null,
+      );
       if (!mounted || _selectedLeagueId != leagueId) return;
       setState(() {
         _availableLeagues = [
@@ -2606,6 +3078,7 @@ class _LigaAppState extends State<LigaApp> {
                 ...league,
                 'monthlyDues': settings.$1,
                 'contributionName': settings.$2.trim(),
+                if (foulLimitChanged) 'teamFoulLimit': settings.$3,
               }
             else
               league,
@@ -2807,6 +3280,17 @@ class _LigaAppState extends State<LigaApp> {
           'Cuotas: ${formatPesos(duesReceived)} recibidos de ${formatPesos(duesExpected)} esperados',
           style: const TextStyle(color: _muted, fontSize: 11),
         ),
+        if (players.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton.icon(
+              onPressed: _shareLeagueDues,
+              icon: const Icon(Icons.chat_outlined),
+              label: const Text('Compartir pagos por WhatsApp'),
+            ),
+          ),
+        ],
         const SizedBox(height: 20),
         _financeHeading(
           'CUOTAS MENSUALES · ${formatPesos(_monthlyDues)} POR JUGADOR',
@@ -2851,15 +3335,32 @@ class _LigaAppState extends State<LigaApp> {
                         '${received > _monthlyDues ? ' · Excedente ${formatPesos(received - _monthlyDues)}' : ''}',
                         style: const TextStyle(color: _muted, fontSize: 11),
                       ),
-                      trailing: Text(
-                        pending == 0
-                            ? 'Completa'
-                            : 'Debe ${formatPesos(pending)}',
-                        style: TextStyle(
-                          color: pending == 0 ? _blue : _orange,
-                          fontSize: 11,
-                          fontWeight: FontWeight.bold,
-                        ),
+                      trailing: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Text(
+                            pending == 0
+                                ? 'Completa'
+                                : 'Debe ${formatPesos(pending)}',
+                            style: TextStyle(
+                              color: pending == 0 ? _blue : _orange,
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          IconButton(
+                            tooltip: 'Enviar estado por WhatsApp',
+                            onPressed: () => _shareMemberDues(player),
+                            icon: const Icon(Icons.chat_outlined, size: 18),
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints.tightFor(
+                              width: 32,
+                              height: 32,
+                            ),
+                            visualDensity: VisualDensity.compact,
+                          ),
+                        ],
                       ),
                     );
                   }).toList(),
@@ -4030,6 +4531,10 @@ class _CompareViewState extends State<_CompareView> {
   String? _second;
   String? _teammatePlayer;
   String _rankingStat = 'points';
+  String _statisticsPeriod = 'always';
+  DateTime _statisticsDate = DateTime.now();
+  String _performancePeriod = 'month';
+  String? _performanceGameId;
   int _section = 0;
 
   static const _rankingCategories = [
@@ -4083,6 +4588,7 @@ class _CompareViewState extends State<_CompareView> {
               _sectionChip(0, 'Cara a cara', Icons.compare_arrows),
               _sectionChip(1, 'Por estadística', Icons.leaderboard),
               _sectionChip(2, 'Compañeros', Icons.groups),
+              _sectionChip(3, 'Mejor jugador', Icons.emoji_events),
             ],
           ),
         ),
@@ -4090,6 +4596,7 @@ class _CompareViewState extends State<_CompareView> {
           child: switch (_section) {
             1 => _rankingScreen(),
             2 => _teammateScreen(),
+            3 => _bestPlayerScreen(),
             _ => _comparisonScreen(),
           },
         ),
@@ -4167,10 +4674,11 @@ class _CompareViewState extends State<_CompareView> {
   );
 
   Widget _rankingScreen() {
+    final filteredGames = _gamesForPeriod(_statisticsPeriod, _statisticsDate);
     final ranked = [...widget.players]..sort((a, b) {
       final difference =
-          _rankingValue(widget.totalsFor(b.id), _rankingStat) -
-          _rankingValue(widget.totalsFor(a.id), _rankingStat);
+          _rankingValue(_totalsForGames(b.id, filteredGames), _rankingStat) -
+          _rankingValue(_totalsForGames(a.id, filteredGames), _rankingStat);
       return difference != 0
           ? difference
           : a.name.toLowerCase().compareTo(b.name.toLowerCase());
@@ -4188,6 +4696,23 @@ class _CompareViewState extends State<_CompareView> {
           style: TextStyle(color: _muted),
         ),
         const SizedBox(height: 14),
+        _periodSelector(
+          value: _statisticsPeriod,
+          options: const {
+            'always': 'Siempre',
+            'day': 'Día',
+            'week': 'Semana',
+            'month': 'Mes',
+          },
+          onChanged: (value) => setState(() => _statisticsPeriod = value),
+        ),
+        if (_statisticsPeriod != 'always') ...[
+          const SizedBox(height: 8),
+          _dateSelector(_statisticsPeriod, _statisticsDate, (date) {
+            setState(() => _statisticsDate = date);
+          }),
+        ],
+        const SizedBox(height: 12),
         DropdownButtonFormField<String>(
           value: _rankingStat,
           isExpanded: true,
@@ -4218,7 +4743,7 @@ class _CompareViewState extends State<_CompareView> {
           child: Column(
             children:
                 ranked.asMap().entries.map((entry) {
-                  final total = widget.totalsFor(entry.value.id);
+                  final total = _totalsForGames(entry.value.id, filteredGames);
                   return ListTile(
                     leading: CircleAvatar(
                       backgroundColor:
@@ -4250,9 +4775,300 @@ class _CompareViewState extends State<_CompareView> {
                 }).toList(),
           ),
         ),
+        if (filteredGames.isEmpty)
+          const Padding(
+            padding: EdgeInsets.only(top: 14),
+            child: Text(
+              'No hay partidos finalizados en este período.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: _muted),
+            ),
+          ),
       ],
     );
   }
+
+  Widget _bestPlayerScreen() {
+    final filteredGames = _performanceGames();
+    final performances = <String, int>{
+      for (final player in widget.players)
+        player.id: _performanceFor(player.id, filteredGames),
+    };
+    final ranked = [...widget.players]..sort((first, second) {
+      final score =
+          (performances[second.id] ?? 0) - (performances[first.id] ?? 0);
+      return score != 0
+          ? score
+          : first.name.toLowerCase().compareTo(second.name.toLowerCase());
+    });
+    final finishedGames = widget.games.where((game) => game.finished);
+    final selectedGameId =
+        finishedGames.any((game) => game.id == _performanceGameId)
+            ? _performanceGameId
+            : finishedGames.isEmpty
+            ? null
+            : finishedGames.first.id;
+
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(18, 0, 18, 20),
+      children: [
+        const Text(
+          'Mejor jugador',
+          style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
+        ),
+        const SizedBox(height: 4),
+        const Text(
+          'Ordenado por índice de rendimiento: PTS + REB + AST + ROB + BLK − TO.',
+          style: TextStyle(color: _muted),
+        ),
+        const SizedBox(height: 14),
+        _periodSelector(
+          value: _performancePeriod,
+          options: const {
+            'game': 'Partido',
+            'day': 'Día',
+            'week': 'Semana',
+            'month': 'Mes',
+            'always': 'Siempre',
+          },
+          onChanged:
+              (value) => setState(() {
+                _performancePeriod = value;
+                if (value == 'game') {
+                  _performanceGameId =
+                      widget.games
+                          .where((game) => game.finished)
+                          .firstOrNull
+                          ?.id;
+                }
+              }),
+        ),
+        if (_performancePeriod == 'game' && widget.games.any((g) => g.finished))
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: DropdownButtonFormField<String>(
+              value: selectedGameId,
+              isExpanded: true,
+              decoration: const InputDecoration(
+                labelText: 'Partido',
+                border: OutlineInputBorder(),
+              ),
+              items:
+                  widget.games
+                      .where((game) => game.finished)
+                      .map(
+                        (game) => DropdownMenuItem(
+                          value: game.id,
+                          child: Text(
+                            '${_formatDate(game.startedAt)} · ${game.home} ${game.homeScore} - ${game.awayScore} ${game.away}',
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      )
+                      .toList(),
+              onChanged: (value) {
+                if (value != null) {
+                  setState(() => _performanceGameId = value);
+                }
+              },
+            ),
+          ),
+        if (_performancePeriod != 'always' && _performancePeriod != 'game') ...[
+          const SizedBox(height: 8),
+          _dateSelector(_performancePeriod, _statisticsDate, (date) {
+            setState(() => _statisticsDate = date);
+          }),
+        ],
+        const SizedBox(height: 12),
+        if (filteredGames.isEmpty)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 22),
+            child: Text(
+              'No hay partidos finalizados en este período.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: _muted),
+            ),
+          )
+        else
+          Container(
+            decoration: BoxDecoration(
+              color: _surface,
+              borderRadius: BorderRadius.circular(18),
+            ),
+            child: Column(
+              children:
+                  ranked.asMap().entries.map((entry) {
+                    final totals = _totalsForGames(
+                      entry.value.id,
+                      filteredGames,
+                    );
+                    return ListTile(
+                      leading: CircleAvatar(
+                        backgroundColor:
+                            entry.key == 0
+                                ? _orange.withValues(alpha: .2)
+                                : _background,
+                        child: Text(
+                          '${entry.key + 1}',
+                          style: TextStyle(
+                            color: entry.key == 0 ? _orange : _muted,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                      title: Text(entry.value.name),
+                      subtitle: Text(
+                        '${totals.points} pts · ${totals.rebounds} reb · ${totals.assists} ast · ${totals.steals} rob · ${totals.blocks} blk · ${totals.turnovers} TO',
+                        style: const TextStyle(color: _muted, fontSize: 11),
+                      ),
+                      trailing: Text(
+                        '${performances[entry.value.id]}',
+                        style: const TextStyle(
+                          color: _orange,
+                          fontSize: 20,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                    );
+                  }).toList(),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _periodSelector({
+    required String value,
+    required Map<String, String> options,
+    required ValueChanged<String> onChanged,
+  }) => DropdownButtonFormField<String>(
+    value: value,
+    isExpanded: true,
+    decoration: const InputDecoration(
+      labelText: 'Período',
+      border: OutlineInputBorder(),
+      prefixIcon: Icon(Icons.filter_list),
+    ),
+    items:
+        options.entries
+            .map(
+              (entry) =>
+                  DropdownMenuItem(value: entry.key, child: Text(entry.value)),
+            )
+            .toList(),
+    onChanged: (next) {
+      if (next != null) onChanged(next);
+    },
+  );
+
+  Widget _dateSelector(
+    String period,
+    DateTime date,
+    ValueChanged<DateTime> onSelected,
+  ) => OutlinedButton.icon(
+    onPressed: () async {
+      final selected = await showDatePicker(
+        context: context,
+        initialDate: date,
+        firstDate: DateTime(2000),
+        lastDate: DateTime.now(),
+      );
+      if (selected != null) onSelected(selected);
+    },
+    icon: const Icon(Icons.calendar_today, size: 17),
+    label: Text(
+      period == 'month'
+          ? '${date.month.toString().padLeft(2, '0')}/${date.year}'
+          : _formatDate(date),
+    ),
+  );
+
+  List<Game> _gamesForPeriod(String period, DateTime date) =>
+      widget.games.where((game) {
+        if (!game.finished) return false;
+        if (period == 'always') return true;
+        if (period == 'day') return _isSameDay(game.startedAt, date);
+        if (period == 'month') {
+          return game.startedAt.year == date.year &&
+              game.startedAt.month == date.month;
+        }
+        final weekStart = DateTime(
+          date.year,
+          date.month,
+          date.day - (date.weekday - DateTime.monday),
+        );
+        final nextWeek = weekStart.add(const Duration(days: 7));
+        return !game.startedAt.isBefore(weekStart) &&
+            game.startedAt.isBefore(nextWeek);
+      }).toList();
+
+  List<Game> _performanceGames() {
+    if (_performancePeriod == 'game') {
+      final finishedGames =
+          widget.games.where((game) => game.finished).toList();
+      final gameId =
+          finishedGames.any((game) => game.id == _performanceGameId)
+              ? _performanceGameId
+              : finishedGames.isEmpty
+              ? null
+              : finishedGames.first.id;
+      return finishedGames.where((game) => game.id == gameId).toList();
+    }
+    return _gamesForPeriod(_performancePeriod, _statisticsDate);
+  }
+
+  PlayerTotals _totalsForGames(String playerId, List<Game> games) {
+    final totals = PlayerTotals();
+    for (final game in games) {
+      final home = game.homePlayers.contains(playerId);
+      final away = game.awayPlayers.contains(playerId);
+      if (!home && !away) continue;
+      totals.games++;
+      final eligibleForResult =
+          game.resultPlayerIds == null ||
+          game.resultPlayerIds!.contains(playerId);
+      if (eligibleForResult && game.homeScore != game.awayScore) {
+        final playerWon = game.homeScore > game.awayScore ? home : away;
+        if (playerWon) {
+          totals.wins++;
+        } else {
+          totals.losses++;
+        }
+      }
+      for (final line in game.lines.where(
+        (line) => line.playerId == playerId,
+      )) {
+        totals.points += line.points;
+        totals.rebounds += line.rebounds;
+        totals.assists += line.assists;
+        totals.threes += line.threes;
+        totals.steals += line.steals;
+        totals.turnovers += line.turnovers;
+        totals.blocks += line.blocks;
+        totals.personalFouls += line.personalFouls;
+      }
+    }
+    return totals;
+  }
+
+  int _performanceFor(String playerId, List<Game> games) {
+    final totals = _totalsForGames(playerId, games);
+    return totals.points +
+        totals.rebounds +
+        totals.assists +
+        totals.steals +
+        totals.blocks -
+        totals.turnovers;
+  }
+
+  bool _isSameDay(DateTime first, DateTime second) =>
+      first.year == second.year &&
+      first.month == second.month &&
+      first.day == second.day;
+
+  String _formatDate(DateTime date) =>
+      '${date.day.toString().padLeft(2, '0')}/'
+      '${date.month.toString().padLeft(2, '0')}/${date.year}';
 
   Widget _teammateScreen() {
     final selectedId =
@@ -4341,6 +5157,10 @@ class _CompareViewState extends State<_CompareView> {
       final isHome = game.homePlayers.contains(playerId);
       final isAway = game.awayPlayers.contains(playerId);
       if (!isHome && !isAway) continue;
+      if (game.resultPlayerIds != null &&
+          !game.resultPlayerIds!.contains(playerId)) {
+        continue;
+      }
       final teammates = isHome ? game.homePlayers : game.awayPlayers;
       final won =
           game.homeScore == game.awayScore
@@ -4349,6 +5169,10 @@ class _CompareViewState extends State<_CompareView> {
               ? game.homeScore > game.awayScore
               : game.awayScore > game.homeScore;
       for (final teammateId in teammates.where((id) => id != playerId)) {
+        if (game.resultPlayerIds != null &&
+            !game.resultPlayerIds!.contains(teammateId)) {
+          continue;
+        }
         final record = records.putIfAbsent(teammateId, _TeammateRecord.new);
         record.games++;
         if (won == null) {
@@ -4488,6 +5312,11 @@ class _CompareViewState extends State<_CompareView> {
       final secondAway = game.awayPlayers.contains(_second);
       final met = firstHome && secondAway || firstAway && secondHome;
       if (!met) continue;
+      if (game.resultPlayerIds != null &&
+          (!game.resultPlayerIds!.contains(_first) ||
+              !game.resultPlayerIds!.contains(_second))) {
+        continue;
+      }
       if (game.homeScore == game.awayScore) {
         ties++;
       } else {

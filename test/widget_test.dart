@@ -78,6 +78,155 @@ void main() {
     expect(game.id, isNotEmpty);
   });
 
+  test('removing a point updates the selected player and team score', () {
+    final game = Game(
+      id: 'game-1',
+      home: 'Local',
+      away: 'Visitante',
+      homePlayers: const ['p1'],
+      awayPlayers: const [],
+      mode: 'points',
+      target: 21,
+      durationSeconds: 600,
+      startedAt: DateTime(2026, 1, 1),
+      homeScore: 3,
+      lines: [PlayerLine(playerId: 'p1', points: 3, threes: 1)],
+    );
+
+    expect(game.removePoint('home', playerId: 'p1'), isTrue);
+    expect(game.homeScore, 2);
+    expect(game.lineFor('p1').points, 2);
+    expect(game.lineFor('p1').threes, 1);
+    expect(game.toJson()['lines'].single['points'], 2);
+  });
+
+  test('correcting a three-pointer to a two-pointer updates both stats', () {
+    final game = Game(
+      id: 'game-1',
+      home: 'Local',
+      away: 'Visitante',
+      homePlayers: const ['p1'],
+      awayPlayers: const [],
+      mode: 'points',
+      target: 21,
+      durationSeconds: 600,
+      startedAt: DateTime(2026, 1, 1),
+      homeScore: 3,
+      lines: [PlayerLine(playerId: 'p1', points: 3, threes: 1)],
+    );
+
+    expect(
+      game.removePoint('home', playerId: 'p1', correctThreeToTwo: true),
+      isTrue,
+    );
+    expect(game.homeScore, 2);
+    expect(game.lineFor('p1').points, 2);
+    expect(game.lineFor('p1').threes, 0);
+    expect(game.toJson()['lines'].single['threes'], 0);
+  });
+
+  test(
+    'substitution preserves stats and records only finishers for results',
+    () {
+      final game = Game(
+        id: 'game-1',
+        home: 'Local',
+        away: 'Visitante',
+        homePlayers: ['p1', 'p2'],
+        awayPlayers: ['p3'],
+        mode: 'time',
+        target: 21,
+        durationSeconds: 600,
+        startedAt: DateTime(2026, 1, 1),
+        homeScore: 18,
+        awayScore: 14,
+        lines: [PlayerLine(playerId: 'p1', points: 6)],
+      );
+
+      expect(game.substitute('home', 'p1', 'p4'), isTrue);
+      game.recordResultPlayers();
+      final restored = Game.fromJson(game.toJson());
+
+      expect(restored.homeScore, 18);
+      expect(restored.homePlayers, containsAll(['p1', 'p2', 'p4']));
+      expect(restored.lines.single.points, 6);
+      expect(restored.resultPlayerIds, contains('p4'));
+      expect(restored.resultPlayerIds, isNot(contains('p1')));
+    },
+  );
+
+  test('a point cannot be removed from a player outside the team roster', () {
+    final game = Game(
+      id: 'game-1',
+      home: 'Local',
+      away: 'Visitante',
+      homePlayers: const ['p1'],
+      awayPlayers: const ['p2'],
+      mode: 'points',
+      target: 21,
+      durationSeconds: 600,
+      startedAt: DateTime(2026, 1, 1),
+      homeScore: 3,
+      lines: [PlayerLine(playerId: 'p2', points: 3)],
+    );
+
+    expect(game.removePoint('home', playerId: 'p2'), isFalse);
+    expect(game.homeScore, 3);
+    expect(game.lineFor('p2').points, 3);
+  });
+
+  test('WhatsApp payment links encode the full message', () {
+    const message = 'Cuota de Ana Pérez: RD\$ 300';
+
+    final uri = whatsAppShareUri(message);
+
+    expect(uri.host, 'wa.me');
+    expect(uri.queryParameters['text'], message);
+  });
+
+  test('member WhatsApp message includes only their monthly payments', () {
+    final date = DateTime(2026, 11, 15);
+    final payments = [
+      FinanceEntry(
+        id: 'p1-payment',
+        kind: 'dues',
+        period: '2026-11',
+        date: date,
+        amount: 100,
+        category: 'dues',
+        description: '',
+        paymentMethod: 'cash',
+        memberId: 'p1',
+        memberName: 'Ana Pérez',
+      ),
+      FinanceEntry(
+        id: 'p2-payment',
+        kind: 'dues',
+        period: '2026-11',
+        date: date,
+        amount: 300,
+        category: 'dues',
+        description: '',
+        memberId: 'p2',
+        memberName: 'Ana Pérez',
+      ),
+    ];
+
+    final message = buildMemberDuesWhatsAppMessage(
+      leagueName: 'Liga La Fe',
+      memberId: 'p1',
+      memberName: 'Ana Pérez',
+      period: '2026-11',
+      monthlyDues: 300,
+      received: 100,
+      payments: payments,
+    );
+
+    expect(message, contains('• 15/11/2026: RD\$ 100'));
+    expect(message, contains('Pendiente: RD\$ 200'));
+    expect(message, isNot(contains('• 15/11/2026: RD\$ 300')));
+  });
+
   testWidgets('opens the league scoreboard in Spanish', (tester) async {
     SharedPreferences.setMockInitialValues({});
     await tester.pumpWidget(LigaApp(backend: FakeLeagueBackend()));
@@ -227,7 +376,68 @@ void main() {
     expect(find.text('Jugador 1'), findsWidgets);
   });
 
+  testWidgets('filters stats by date and ranks game performance', (
+    tester,
+  ) async {
+    final players = [
+      {'id': 'p0', 'name': 'Jugador 0'},
+      {'id': 'p1', 'name': 'Jugador 1'},
+    ];
+    final game = Game(
+      id: 'performance-game',
+      home: 'Local',
+      away: 'Visitante',
+      homePlayers: const ['p0'],
+      awayPlayers: const ['p1'],
+      mode: 'time',
+      target: 21,
+      durationSeconds: 600,
+      startedAt: DateTime.now(),
+      homeScore: 10,
+      awayScore: 5,
+      finished: true,
+      resultPlayerIds: const ['p0', 'p1'],
+      lines: [
+        PlayerLine(playerId: 'p0', points: 8, assists: 3),
+        PlayerLine(playerId: 'p1', points: 2),
+      ],
+    );
+    SharedPreferences.setMockInitialValues({'players': jsonEncode(players)});
+    await tester.pumpWidget(
+      LigaApp(
+        backend: FakeLeagueBackend(players: players, games: [game.toJson()]),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Comparar'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Por estadística'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Siempre').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Día').last);
+    await tester.pumpAndSettle();
+    expect(
+      find.textContaining('${DateTime.now().day.toString().padLeft(2, '0')}/'),
+      findsOneWidget,
+    );
+
+    await tester.ensureVisible(find.text('Mejor jugador'));
+    await tester.tap(find.text('Mejor jugador'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Mes'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Partido').last);
+    await tester.pumpAndSettle();
+    expect(find.text('Jugador 0'), findsOneWidget);
+    expect(find.text('11'), findsOneWidget);
+  });
+
   testWidgets('can increase and correct a live player rebound', (tester) async {
+    tester.view.physicalSize = const Size(800, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
     final players = List.generate(
       10,
       (index) => {'id': 'p$index', 'name': 'Jugador $index'},
@@ -239,11 +449,6 @@ void main() {
     await tester.pumpAndSettle();
     await startGameFromSheet(tester);
 
-    await tester.scrollUntilVisible(
-      find.byTooltip('Sumar REB').first,
-      200,
-      scrollable: find.byType(Scrollable).first,
-    );
     await tester.tap(find.byTooltip('Sumar REB').first);
     await tester.pumpAndSettle();
     expect(find.text('REB 1'), findsOneWidget);
@@ -258,6 +463,119 @@ void main() {
     expect(find.text('FP 1'), findsOneWidget);
 
     expect(find.byTooltip('Sumar 3PT'), findsNothing);
+  });
+
+  testWidgets('quick stats and the score adjustment ask for a player', (
+    tester,
+  ) async {
+    final players = List.generate(
+      10,
+      (index) => {'id': 'p$index', 'name': 'Jugador $index'},
+    );
+    SharedPreferences.setMockInitialValues({'players': jsonEncode(players)});
+    await tester.pumpWidget(
+      LigaApp(backend: FakeLeagueBackend(players: players)),
+    );
+    await tester.pumpAndSettle();
+    await startGameFromSheet(tester);
+
+    await tester.tap(find.byTooltip('Anotar AST').first);
+    await tester.pumpAndSettle();
+    expect(find.text('¿A quién anotar AST?'), findsOneWidget);
+    await tester.tap(find.text('Jugador 0').last);
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.text('AST 1'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.text('AST 1'), findsOneWidget);
+
+    await tester.ensureVisible(find.byTooltip('Sumar punto').first);
+    await tester.tap(find.byTooltip('Sumar punto').first);
+    await tester.pumpAndSettle();
+    expect(find.text('¿Quién anotó 1 punto?'), findsOneWidget);
+    expect(find.text('Punto sin atribuir'), findsNothing);
+    await tester.tap(find.text('Jugador 0').last);
+    await tester.pumpAndSettle();
+    expect(find.text('PTS 1'), findsOneWidget);
+  });
+
+  testWidgets('a substitute keeps the outgoing player stats separate', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(800, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final players = List.generate(
+      11,
+      (index) => {'id': 'p$index', 'name': 'Jugador $index'},
+    );
+    SharedPreferences.setMockInitialValues({'players': jsonEncode(players)});
+    await tester.pumpWidget(
+      LigaApp(backend: FakeLeagueBackend(players: players)),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Iniciar partido'));
+    await tester.pumpAndSettle();
+    for (var index = 0; index < 5; index++) {
+      await tester.tap(find.byType(FilterChip).at(index));
+      await tester.pump();
+    }
+    for (var index = 16; index < 21; index++) {
+      await tester.tap(find.byType(FilterChip).at(index));
+      await tester.pump();
+    }
+    await tester.tap(find.text('Comenzar partido'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Sustituir Jugador 0').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Jugador 10').last);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Jugador 0 · En banca'), findsOneWidget);
+    expect(find.text('Jugador 10'), findsOneWidget);
+    expect(find.text('0'), findsNWidgets(2));
+  });
+
+  testWidgets('warns on every personal foul from the configured limit', (
+    tester,
+  ) async {
+    final players = List.generate(
+      10,
+      (index) => {'id': 'p$index', 'name': 'Jugador $index'},
+    );
+    SharedPreferences.setMockInitialValues({'players': jsonEncode(players)});
+    await tester.pumpWidget(
+      LigaApp(backend: FakeLeagueBackend(players: players)),
+    );
+    await tester.pumpAndSettle();
+    await startGameFromSheet(tester);
+
+    final foulButton = find.byTooltip('Anotar FP').first;
+    await tester.ensureVisible(foulButton);
+    for (var foul = 1; foul <= 8; foul++) {
+      await tester.tap(foulButton);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Jugador 0').last);
+      if (foul < 8) {
+        await tester.pumpAndSettle();
+      } else {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+    }
+
+    expect(find.textContaining('falta colectiva 8'), findsOneWidget);
+    await tester.pump(const Duration(seconds: 5));
+    await tester.pumpAndSettle();
+    await tester.tap(foulButton);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Jugador 0').last);
+    await tester.pumpAndSettle();
+    expect(find.text('FP 9'), findsOneWidget);
+    expect(find.textContaining('falta colectiva 9'), findsOneWidget);
   });
 
   testWidgets(
@@ -281,6 +599,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('3'), findsOneWidget);
+      expect(find.text('3PT 0'), findsNWidgets(9));
       await tester.scrollUntilVisible(
         find.text('3PT 1'),
         200,
@@ -288,6 +607,22 @@ void main() {
       );
       expect(find.text('PTS 3'), findsOneWidget);
       expect(find.text('3PT 1'), findsOneWidget);
+
+      await tester.ensureVisible(find.byTooltip('Restar punto').first);
+      await tester.tap(find.byTooltip('Restar punto').first);
+      await tester.pumpAndSettle();
+      expect(find.text('¿A quién quitarle 1 punto?'), findsOneWidget);
+      await tester.tap(find.text('3PT → 2PT'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('2'), findsOneWidget);
+      await tester.scrollUntilVisible(
+        find.text('PTS 2'),
+        200,
+        scrollable: find.byType(Scrollable).first,
+      );
+      expect(find.text('PTS 2'), findsOneWidget);
+      expect(find.text('3PT 0'), findsNWidgets(10));
     },
   );
 
@@ -615,16 +950,33 @@ void main() {
     );
     expect(find.textContaining('Abonado RD\$ 100'), findsOneWidget);
 
+    await tester.scrollUntilVisible(
+      find.text('Registrar cuota'),
+      -200,
+      scrollable: find.byType(Scrollable).first,
+    );
     await tester.ensureVisible(find.text('Registrar cuota'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Registrar cuota'));
     await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextField).last, '200');
     await tester.tap(find.text('Guardar movimiento'));
     await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.textContaining('Abonado RD\$ 300 de RD\$ 300'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
     expect(find.textContaining('Abonado RD\$ 300 de RD\$ 300'), findsOneWidget);
     expect(find.text('Completa'), findsOneWidget);
 
+    await tester.scrollUntilVisible(
+      find.text('Registrar gasto'),
+      -200,
+      scrollable: find.byType(Scrollable).first,
+    );
     await tester.ensureVisible(find.text('Registrar gasto'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Registrar gasto'));
     await tester.pumpAndSettle();
     final expenseCategory = find.byType(DropdownButton<String>).last;
@@ -660,7 +1012,7 @@ void main() {
     await tester.ensureVisible(find.byTooltip('Configuración de finanzas'));
     await tester.tap(find.byTooltip('Configuración de finanzas'));
     await tester.pumpAndSettle();
-    await tester.enterText(find.byType(TextFormField).last, 'María López');
+    await tester.enterText(find.byType(TextFormField).at(1), 'María López');
     await tester.tap(find.text('Guardar').last);
     await tester.pumpAndSettle();
     expect(backend.contributionName, 'María López');
@@ -680,7 +1032,7 @@ void main() {
     await tester.ensureVisible(find.byTooltip('Configuración de finanzas'));
     await tester.tap(find.byTooltip('Configuración de finanzas'));
     await tester.pumpAndSettle();
-    await tester.enterText(find.byType(TextFormField).last, '');
+    await tester.enterText(find.byType(TextFormField).at(1), '');
     await tester.tap(find.text('Guardar').last);
     await tester.pumpAndSettle();
     expect(backend.contributionName, isEmpty);
@@ -742,8 +1094,10 @@ void main() {
     await tester.tap(find.byTooltip('Configuración de finanzas'));
     await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextFormField).first, '750');
+    await tester.enterText(find.byType(TextFormField).last, '7');
     await tester.tap(find.text('Guardar').last);
     await tester.pumpAndSettle();
+    expect(backend.teamFoulLimit, 7);
 
     await tester.tap(find.text('Registrar cuota'));
     await tester.pumpAndSettle();
@@ -813,6 +1167,37 @@ void main() {
       scrollable: find.byType(Scrollable).first,
     );
     expect(find.textContaining('Depósito'), findsOneWidget);
+  });
+
+  testWidgets('finance page offers WhatsApp sharing for members and groups', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    await tester.pumpWidget(
+      LigaApp(
+        backend: FakeLeagueBackend(
+          players: [
+            {'id': 'p1', 'name': 'Ana Pérez'},
+          ],
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Finanzas'));
+    await tester.pumpAndSettle();
+
+    await tester.scrollUntilVisible(
+      find.text('Compartir pagos por WhatsApp'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.text('Compartir pagos por WhatsApp'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.byTooltip('Enviar estado por WhatsApp'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.byTooltip('Enviar estado por WhatsApp'), findsOneWidget);
   });
 
   testWidgets('expands both complete rosters in compact saved results', (
@@ -935,6 +1320,7 @@ class FakeLeagueBackend implements LeagueBackend {
   final List<Map<String, dynamic>> _financeEntries;
   Map<String, dynamic>? _activeGame;
   int monthlyDues;
+  int teamFoulLimit = 8;
   String contributionName = '';
   bool failFinish = false;
   Completer<void>? syncGate;
@@ -1007,8 +1393,11 @@ class FakeLeagueBackend implements LeagueBackend {
   );
 
   @override
-  Stream<Map<String, dynamic>?> watchLeague(String leagueId) =>
-      Stream.value({'name': 'Liga La Fe', 'monthlyDues': monthlyDues});
+  Stream<Map<String, dynamic>?> watchLeague(String leagueId) => Stream.value({
+    'name': 'Liga La Fe',
+    'monthlyDues': monthlyDues,
+    'teamFoulLimit': teamFoulLimit,
+  });
 
   @override
   Stream<List<Map<String, dynamic>>> watchAvailableLeagues(
@@ -1020,6 +1409,7 @@ class FakeLeagueBackend implements LeagueBackend {
       'name': 'Liga La Fe',
       'role': isOwner ? 'owner' : 'viewer',
       'monthlyDues': monthlyDues,
+      'teamFoulLimit': teamFoulLimit,
     },
   ]);
 
@@ -1046,9 +1436,11 @@ class FakeLeagueBackend implements LeagueBackend {
     String leagueId,
     int amount,
     String name,
+    int? foulLimit,
   ) async {
     monthlyDues = amount;
     contributionName = name;
+    if (foulLimit != null) teamFoulLimit = foulLimit;
   }
 
   @override
